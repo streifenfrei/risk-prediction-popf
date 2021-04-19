@@ -85,11 +85,6 @@ class DataLoader(SlimDataLoaderBase, ABC):
                             mask[segmentation_root[0]:segmentation_root[0] + segmentation_size[0],
                                  segmentation_root[1]:segmentation_root[1] + segmentation_size[1],
                                  segmentation_root[2]:segmentation_root[2] + segmentation_size[2]] = True
-                            import matplotlib.pyplot as plt
-                            for img in np.split(mask, indices_or_sections=mask.shape[2], axis=2):
-                                img = np.squeeze(img)
-                                plt.imshow(img)
-                                plt.show()
                             data_np = np.where(mask, data_np, 0)
                         else:
                             segmentation_np = sitk.GetArrayFromImage(segmentation_sitk)
