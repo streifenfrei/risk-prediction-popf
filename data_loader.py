@@ -1,11 +1,11 @@
-import logging
-import os
 from abc import ABC
 
 import SimpleITK as sitk
 import numpy as np
 
 from batchgenerators.dataloading import SlimDataLoaderBase
+
+from util import data_iterator
 
 
 class DataLoader(SlimDataLoaderBase, ABC):
@@ -23,19 +23,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
             self.roi_size = roi[3:]
         self.crop = crop
         self._data = []
-        for root, _, files in os.walk(data_directory):
-            try:
-                patient_id = int(os.path.basename(root))
-            except ValueError:
-                continue
-            nrrd_files = set([x for x in files if x[-4:] == "nrrd"])
-            segmentation_file = set([x for x in nrrd_files if x[-8:] == "seg.nrrd"])
-            data_file = nrrd_files - segmentation_file
-            if len(segmentation_file) != 1 or len(data_file) != 1:
-                logging.warning(f"Amount of .nrrd files found in {root} != 2. Skipping")
-                continue
-            data_file = os.path.join(root, list(data_file)[0])
-            segmentation_file = os.path.join(root, list(segmentation_file)[0])
+        for patient_id, data_file, segmentation_file in data_iterator(data_directory):
             self._data.append((patient_id, data_file, segmentation_file))
         self.current_position = 0
         self.was_initialized = False
