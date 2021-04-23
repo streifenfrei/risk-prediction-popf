@@ -2,8 +2,6 @@ import os
 from argparse import ArgumentParser
 
 import yaml
-import matplotlib.pyplot as plt
-import numpy as np
 from data_loader import DataLoader
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,14 +16,9 @@ def main():
     data_loader = DataLoader(config["path"],
                              config["batch_size"],
                              config["crop"],
-                             roi=[*config["roi_root"], *config["roi_size"]])
+                             number_of_threads_in_multithreaded=1)
     for batch in data_loader:
-        data = batch["data"]
-        for image in np.split(data, indices_or_sections=data.shape[-1], axis=-1):
-            image = image.squeeze()
-            for img in np.split(image, indices_or_sections=image.shape[0], axis=0):
-                plt.imshow(img.transpose())
-                plt.show()
+        print(batch["data"].shape)
 
 
 if __name__ == '__main__':

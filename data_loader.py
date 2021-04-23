@@ -1,3 +1,4 @@
+import os
 from abc import ABC
 
 import SimpleITK as sitk
@@ -5,26 +6,35 @@ import numpy as np
 
 from batchgenerators.dataloading import SlimDataLoaderBase
 
-from util import data_iterator
-
 
 class DataLoader(SlimDataLoaderBase, ABC):
     def __init__(self,
                  data_directory,
                  batch_size,
                  crop="none",
-                 number_of_threads_in_multithreaded=4,
-                 roi=None):
+                 number_of_threads_in_multithreaded=4):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
-        assert crop in ["none", "fixed", "roi", "seg_bin", "seg"]
-        if crop != "none":
-            assert roi is not None
-            self.roi_root = roi[:3]
-            self.roi_size = roi[3:]
+        assert crop in ["none", "fixed", "roi", "seg"]
         self.crop = crop
         self._data = []
-        for patient_id, data_file, segmentation_file in data_iterator(data_directory):
-            self._data.append((patient_id, data_file, segmentation_file))
+        for directory in os.scandir(data_directory):
+            if directory.is_dir():
+                try:
+                    patient_id = int(directory.name)
+                except ValueError:
+                    continue
+                data_full = os.path.join(directory.path, "full.nrrd")
+                data_fixed = os.path.join(directory.path, "fixed.nrrd")
+                data_roi = os.path.join(directory.path, "roi.nrrd")
+                data_seg = os.path.join(directory.path, "seg.nrrd")
+                if crop == "none" and os.path.exists(data_full):
+                    self._data.append((patient_id, data_full))
+                elif crop == "fixed" and os.path.exists(data_fixed):
+                    self._data.append((patient_id, data_fixed))
+                elif crop == "roi" and os.path.exists(data_roi):
+                    self._data.append((patient_id, data_roi))
+                elif crop == "seg" and os.path.exists(data_seg):
+                    self._data.append((patient_id, data_seg))
         self.current_position = 0
         self.was_initialized = False
 
@@ -36,57 +46,18 @@ class DataLoader(SlimDataLoaderBase, ABC):
         if not self.was_initialized:
             self.reset()
         if self.current_position < len(self._data):
-            # load files as sitk objects
-            batch_sitk = []
+            data_batch = []
+            label_batch = []
             for i in range(self.batch_size):
                 index = self.current_position + i
                 if index < len(self._data):
-                    patient_id, data_file, segmentation_file = self._data[self.current_position]
-                    data_sitk = sitk.ReadImage(data_file, imageIO="NrrdImageIO")
-                    segmentation_sitk = None
-                    if self.crop != "none":
-                        segmentation_sitk = sitk.ReadImage(segmentation_file, imageIO="NrrdImageIO")
-                    batch_sitk.append((patient_id, data_sitk, segmentation_sitk))
-            # preprocess data
-            batch_np = []
-            for patient_id, data_sitk, segmentation_sitk in batch_sitk:
-                if self.crop == "none":
-                    data_np = sitk.GetArrayFromImage(data_sitk)
-                    data_np = np.expand_dims(data_np.transpose(), axis=0)
-                else:
-                    data_sitk_cropped = data_sitk[
-                                        self.roi_root[0]:self.roi_root[0] + self.roi_size[0],
-                                        self.roi_root[1]:self.roi_root[1] + self.roi_size[1],
-                                        self.roi_root[2]:self.roi_root[2] + self.roi_size[2]]
-                    data_np = sitk.GetArrayFromImage(data_sitk_cropped).transpose()
-                    if self.crop in ["roi", "seg_bin", "seg"]:
-                        segmentation_root = segmentation_sitk.TransformIndexToPhysicalPoint((0, 0, 0))
-                        segmentation_root = data_sitk.TransformPhysicalPointToIndex(segmentation_root)
-                        segmentation_root = np.array(segmentation_root) - np.array(self.roi_root)
-                        assert all(x >= 0 for x in segmentation_root)
-                        segmentation_size = segmentation_sitk.GetSize()
-                        assert all(seg_root + seg_size <= roi_size for seg_root, seg_size, roi_size in
-                                   zip(segmentation_root, segmentation_size, self.roi_size))
-                        if self.crop == "roi":
-                            mask = np.ones_like(data_np, dtype=np.bool)
-                            mask[segmentation_root[0]:segmentation_root[0] + segmentation_size[0],
-                                 segmentation_root[1]:segmentation_root[1] + segmentation_size[1],
-                                 segmentation_root[2]:segmentation_root[2] + segmentation_size[2]] = False
-                            data_np = np.expand_dims(np.where(mask, 0, data_np), axis=0)
-                        else:
-                            segmentation_np = sitk.GetArrayFromImage(segmentation_sitk).transpose()
-                            if self.crop == "seg_bin":
-                                segmentation_np = segmentation_np.sum(axis=0, keepdims=True)
-                            data_layer = []
-                            for mask in np.split(segmentation_np, indices_or_sections=segmentation_np.shape[0], axis=0):
-                                padding = list((seg_root, roi_size - seg_size - seg_root)
-                                               for seg_root, seg_size, roi_size in
-                                               zip(segmentation_root, segmentation_size, data_np.shape))
-                                mask = np.pad(mask.squeeze(), padding, constant_values=False)
-                                data_layer.append(np.where(mask, data_np, 0))
-                            data_np = np.stack(data_layer)
-                batch_np.append(data_np)
-            batch = {"data": np.stack(batch_np)}
+                    patient_id, data_file = self._data[index]
+                    data_np = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(data_file)).transpose(), axis=0)
+                    data_batch.append(data_np)
+                    # TODO get label
+                    label_batch.append([1])
+            batch = {"data": np.stack(data_batch),
+                     "label": np.stack(label_batch)}
 
             self.current_position += self.number_of_threads_in_multithreaded * self.batch_size
             return batch
