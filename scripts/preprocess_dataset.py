@@ -8,6 +8,7 @@ import numpy as np
 
 MASKING_VALUE = -2000  # just has to be smaller than lower hounsfield boundary
 HOUNSFIELD_BOUNDARIES = [-1024, 3071]
+HOUNSFIELD_RANGE = HOUNSFIELD_BOUNDARIES[1] - HOUNSFIELD_BOUNDARIES[0]
 INTERPOLATION_MAPPING = {
     "linear": sitk.sitkLinear,
     "spline": sitk.sitkBSpline,

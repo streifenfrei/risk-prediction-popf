@@ -5,9 +5,8 @@ from argparse import ArgumentParser
 import SimpleITK as sitk
 import numpy as np
 
-from scripts.preprocess_dataset import HOUNSFIELD_BOUNDARIES
+from scripts.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE
 
-HOUNSFIELD_RANGE = HOUNSFIELD_BOUNDARIES[1] - HOUNSFIELD_BOUNDARIES[0]
 FILE_NAMES = ["full.nrrd", "fixed.nrrd", "roi.nrrd", "seg.nrrd"]
 
 
