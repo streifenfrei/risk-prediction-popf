@@ -5,36 +5,40 @@ import SimpleITK as sitk
 import numpy as np
 
 from batchgenerators.dataloading import SlimDataLoaderBase
+from batchgenerators.transforms import AbstractTransform
+
+
+def scan_data_directory(data_directory, crop="none"):
+    assert crop in ["none", "fixed", "roi", "seg"]
+    data = []
+    for directory in os.scandir(data_directory):
+        if directory.is_dir():
+            try:
+                patient_id = int(directory.name)
+            except ValueError:
+                continue
+            data_full = os.path.join(directory.path, "full.nrrd")
+            data_fixed = os.path.join(directory.path, "fixed.nrrd")
+            data_roi = os.path.join(directory.path, "roi.nrrd")
+            data_seg = os.path.join(directory.path, "seg.nrrd")
+            if crop == "none" and os.path.exists(data_full):
+                data.append((patient_id, data_full))
+            elif crop == "fixed" and os.path.exists(data_fixed):
+                data.append((patient_id, data_fixed))
+            elif crop == "roi" and os.path.exists(data_roi):
+                data.append((patient_id, data_roi))
+            elif crop == "seg" and os.path.exists(data_seg):
+                data.append((patient_id, data_seg))
+    return data
 
 
 class DataLoader(SlimDataLoaderBase, ABC):
     def __init__(self,
-                 data_directory,
+                 data,
                  batch_size,
-                 crop="none",
                  number_of_threads_in_multithreaded=4):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
-        assert crop in ["none", "fixed", "roi", "seg"]
-        self.crop = crop
-        self._data = []
-        for directory in os.scandir(data_directory):
-            if directory.is_dir():
-                try:
-                    patient_id = int(directory.name)
-                except ValueError:
-                    continue
-                data_full = os.path.join(directory.path, "full.nrrd")
-                data_fixed = os.path.join(directory.path, "fixed.nrrd")
-                data_roi = os.path.join(directory.path, "roi.nrrd")
-                data_seg = os.path.join(directory.path, "seg.nrrd")
-                if crop == "none" and os.path.exists(data_full):
-                    self._data.append((patient_id, data_full))
-                elif crop == "fixed" and os.path.exists(data_fixed):
-                    self._data.append((patient_id, data_fixed))
-                elif crop == "roi" and os.path.exists(data_roi):
-                    self._data.append((patient_id, data_roi))
-                elif crop == "seg" and os.path.exists(data_seg):
-                    self._data.append((patient_id, data_seg))
+        self._data = data
         self.current_position = 0
         self.was_initialized = False
 
@@ -64,3 +68,9 @@ class DataLoader(SlimDataLoaderBase, ABC):
         else:
             self.reset()
             raise StopIteration
+
+
+class PrepareForTF(AbstractTransform, ABC):
+    def __call__(self, **data_dict):
+        # TODO implement
+        return data_dict

@@ -1,1 +1,1 @@
-import simple_net
+__all__ = ["simple_net"]
