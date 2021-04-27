@@ -3,6 +3,7 @@ from abc import ABC
 
 import SimpleITK as sitk
 import numpy as np
+import tensorflow as tf
 
 from batchgenerators.dataloading import SlimDataLoaderBase
 from batchgenerators.transforms import AbstractTransform
@@ -59,7 +60,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
                     data_np = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(data_file)).transpose(), axis=0)
                     data_batch.append(data_np)
                     # TODO get label
-                    label_batch.append([1])
+                    label_batch.append(1)
             batch = {"data": np.stack(data_batch),
                      "label": np.stack(label_batch)}
 
@@ -72,5 +73,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
 
 class PrepareForTF(AbstractTransform, ABC):
     def __call__(self, **data_dict):
-        # TODO implement
-        return data_dict
+        data = data_dict["data"]
+        data = np.moveaxis(data, 1, -1)
+        label = data_dict["label"]
+        return tf.convert_to_tensor(data), tf.convert_to_tensor(label)
