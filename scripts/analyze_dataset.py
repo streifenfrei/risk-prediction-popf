@@ -59,6 +59,7 @@ def main():
     recalls = np.zeros(max_bb_size - min_bb_size)
     recalls_std = np.zeros(max_bb_size - min_bb_size)
     recalls_min = np.zeros(max_bb_size - min_bb_size)
+    coverage = np.zeros(max_bb_size - min_bb_size)
     for i, bounding_box in enumerate(search_space):
         x, y, z = bounding_box - min_bb_size
         bounding_box = np.array(bounding_box)
@@ -72,6 +73,7 @@ def main():
         recalls[x][y][z] = np.mean(current_recalls)
         recalls_std[x][y][z] = np.std(current_recalls)
         recalls_min[x][y][z] = np.min(current_recalls)
+        coverage[x][y][z] = (np.count_nonzero(current_recalls == 1.)) / len(rois)
         print(f"\rAnalyze bounding boxes in range [{min_bb_size}, {max_bb_size}]: "
               f"{i + 1}/{len(search_space)} ({int(np.ceil(100 * i / len(search_space)))}%)", end="")
 
@@ -85,7 +87,8 @@ def main():
                    "precisions_min": precisions_min.tolist(),
                    "recalls": recalls.tolist(),
                    "recalls_std": recalls_std.tolist(),
-                   "recalls_min": recalls_min.tolist()}
+                   "recalls_min": recalls_min.tolist(),
+                   "coverage": coverage.tolist()}
         json.dump(results, results_file, sort_keys=True, indent=4)
     print(f"\nWrote results to '{results_file_path}'")
 

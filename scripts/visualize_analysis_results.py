@@ -52,14 +52,15 @@ def _3d_visualization(array, title="42"):
     sitk.Show(sitk_image, title=title)
 
 
-def visualize_bb_analysis(precisions, precisions_std, precisions_min,
-                          recalls, recalls_std, recalls_min, bb_range, f_beta):
+def visualize_bb_analysis(precisions, precisions_std, precisions_min, recalls,
+                          recalls_std, recalls_min, bb_range, coverage, f_beta):
     precisions = np.array(precisions)
     precisions_std = np.array(precisions_std)
     precisions_min = np.array(precisions_min)
     recalls = np.array(recalls)
     recalls_std = np.array(recalls_std)
     recalls_min = np.array(recalls_min)
+    coverage = np.array(coverage)
     f_scores = f_score(precisions, recalls, f_beta)
     f_scores_std = f_score(precisions + precisions_std, recalls + recalls_std, f_beta) - f_scores
     f_scores_min = f_score(precisions - precisions_min, recalls - recalls_min, f_beta)
@@ -77,7 +78,8 @@ def visualize_bb_analysis(precisions, precisions_std, precisions_min,
               f"\t\tPrecision (min): {precisions_min.flatten()[index]}\n"
               f"\t\tRecall (mean): {recalls.flatten()[index]}\n"
               f"\t\tRecall (standard deviation): {recalls_std.flatten()[index]}\n"
-              f"\t\tRecall (min): {recalls_min.flatten()[index]}")
+              f"\t\tRecall (min): {recalls_min.flatten()[index]}\n"
+              f"\t\tCoverage: {coverage.flatten()[index]}")
 
     i = np.argmax(f_scores)
     i_full = np.unravel_index(i, f_scores.shape) + np.array(bb_range[0])
@@ -94,7 +96,7 @@ def main():
     arg_parser = ArgumentParser()
     arg_parser.add_argument("--file", "-f", type=str, required=True)
     arg_parser.add_argument("--hist_coverage", "-hc", type=float, default=0.95)
-    arg_parser.add_argument("--f_beta", "-fb", type=float, default=1.)
+    arg_parser.add_argument("--f_beta", "-fb", type=float, default=2.35)
     args = arg_parser.parse_args()
 
     with open(args.file, "r") as file:
@@ -103,7 +105,7 @@ def main():
     visualize_histograms(results["histograms"], args.hist_coverage)
     visualize_bb_analysis(results["precisions"], results["precisions_std"], results["precisions_min"],
                           results["recalls"], results["recalls_std"],  results["recalls_min"],
-                          results["bb_range"], args.f_beta)
+                          results["bb_range"], results["coverage"], args.f_beta)
 
 
 if __name__ == '__main__':
