@@ -8,12 +8,13 @@ from batchgenerators.dataloading import MultiThreadedAugmenter
 from batchgenerators.transforms import Compose, ResizeTransform
 from sklearn.model_selection import KFold
 
-import models.simple_net
+from models import simple_net, squeeze_net
 from data_loader import DataLoader, scan_data_directory, PrepareForTF
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_mapping = {
-    "simplenet": models.simple_net.get_model
+    "simplenet": simple_net.get_model,
+    "squeezenet": squeeze_net.get_model
 }
 
 
