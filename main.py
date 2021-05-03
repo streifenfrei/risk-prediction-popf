@@ -1,11 +1,10 @@
 import os
 from argparse import ArgumentParser
 
-import numpy as np
 import tensorflow as tf
 import yaml
 from batchgenerators.dataloading import MultiThreadedAugmenter
-from batchgenerators.transforms import Compose, ResizeTransform
+from batchgenerators.transforms import Compose, RandomShiftTransform, MirrorTransform
 from sklearn.model_selection import KFold
 
 from models import simple_net, squeeze_net
@@ -36,9 +35,11 @@ def main():
     # get input shape from dummy loader
     dummy_loader = MultiThreadedAugmenter(DataLoader(data=full_dataset[:1], batch_size=1), PrepareForTF(), 1)
     input_shape = next(dummy_loader)[0].shape[-4:]
-    input_shape = [*[int(2**np.ceil(np.log2(x))) for x in input_shape[:-1]], 1]
-    transforms = [ResizeTransform(input_shape[:-1]), PrepareForTF()]
-    # TODO add more transforms
+    #input_shape = [*[int(2**np.ceil(np.log2(x))) for x in input_shape[:-1]], 1]
+    #transforms.append(ResizeTransform(input_shape[:-1]))
+    transforms = [MirrorTransform(),
+                  RandomShiftTransform(shift_mu=0, shift_sigma=3, p_per_channel=1),
+                  PrepareForTF()]
     transforms = Compose(transforms)
     for i, (train, validation) in enumerate(k_fold.split(full_dataset)):
         dl_train = MultiThreadedAugmenter(DataLoader(data=[full_dataset[x] for x in train],
@@ -56,7 +57,7 @@ def main():
         model.summary()
         model.compile(optimizer=config_training["optimizer"],
                       loss=tf.losses.BinaryCrossentropy(from_logits=True),
-                      metrics=[tf.metrics.BinaryCrossentropy()])
+                      metrics=[tf.metrics.AUC])
         checkpoint_dir = os.path.join(config["workspace"], "cross_validation", str(i))
         checkpoint_file = os.path.join(checkpoint_dir, "{epoch:04d}.ckpt")
         save_frequency = int((len(train) / config_data["batch_size"]) * config_training["save_frequency"])
