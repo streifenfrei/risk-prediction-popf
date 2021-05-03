@@ -74,7 +74,7 @@ class Crop:
         segmentation_origin_in_data = data.TransformPhysicalPointToIndex(segmentation.GetOrigin())
         self.offset = [seg_or if seg_or - off < 0 else off
                        for seg_or, off in zip(segmentation_origin_in_data, self.offset)]
-        self.offset = [off - ((seg_or - off + bb_sz) - data_sz) if seg_or - off + bb_sz >= data_sz else off
+        self.offset = [off + ((seg_or - off + bb_sz) - data_sz) if seg_or - off + bb_sz > data_sz else off
                        for seg_or, off, bb_sz, data_sz in
                        zip(segmentation_origin_in_data, self.offset, bb_size, data.GetSize())]
         cropped_origin = np.array(segmentation_origin_in_data) - self.offset
@@ -168,9 +168,15 @@ def main():
         dataset.append((patient_id, data_file, segmentation_file))
 
     # Resample (and calculate bounding box if required)
-    for i, (patient_id, data_file, segmentation_file) in enumerate(dataset):
-        data_sitk = sitk.ReadImage(data_file)
-        segmentation_sitk = sitk.ReadImage(segmentation_file)
+    invalid_data = []
+    for i, entry in enumerate(dataset):
+        patient_id, data_file, segmentation_file = entry
+        try:
+            data_sitk = sitk.ReadImage(data_file, imageIO="NrrdImageIO")
+            segmentation_sitk = sitk.ReadImage(segmentation_file, imageIO="NrrdImageIO")
+        except RuntimeError:
+            invalid_data.append(entry)
+            continue
         data_sitk, segmentation_sitk = resample(data_sitk, segmentation_sitk, target_size, target_spacing, interpolator)
         data_sitk = clip_intensities(data_sitk)
         output_directory = os.path.join(args.output, str(patient_id), "raw")
@@ -181,7 +187,12 @@ def main():
         print(f"\rResampling: {i + 1}/{len(dataset)}", end="")
         if calculate_bb:
             bb_size = [max(x, y) for x, y in zip(bb_size, segmentation_sitk.GetSize())]
-    print()
+    for entry in invalid_data:
+        dataset.remove(entry)
+    if len(invalid_data) != 0:
+        print(f"\nBroken data in: {','.join([str(i[0]) for i in invalid_data])}")
+    else:
+        print()
 
     # Generate cropped data (and calculate intensity ranges if required)
     for i, (patient_id, _, _) in enumerate(dataset):
