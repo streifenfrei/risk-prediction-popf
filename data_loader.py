@@ -18,18 +18,23 @@ def scan_data_directory(data_directory, crop="none"):
                 patient_id = int(directory.name)
             except ValueError:
                 continue
+            # TODO load label
+            import random
+            label = random.choice([0, 1])
+
             data_full = os.path.join(directory.path, "full.nrrd")
             data_fixed = os.path.join(directory.path, "fixed.nrrd")
             data_roi = os.path.join(directory.path, "roi.nrrd")
             data_seg = os.path.join(directory.path, "seg.nrrd")
+            segmentation = os.path.join(directory.path, "raw", "segmentation.seg.nrrd")
             if crop == "none" and os.path.exists(data_full):
-                data.append((patient_id, data_full))
+                data.append((label, data_full, segmentation))
             elif crop == "fixed" and os.path.exists(data_fixed):
-                data.append((patient_id, data_fixed))
+                data.append((label, data_fixed, segmentation))
             elif crop == "roi" and os.path.exists(data_roi):
-                data.append((patient_id, data_roi))
+                data.append((label, data_roi, segmentation))
             elif crop == "seg" and os.path.exists(data_seg):
-                data.append((patient_id, data_seg))
+                data.append((label, data_seg, segmentation))
     return data
 
 
@@ -53,22 +58,38 @@ class DataLoader(SlimDataLoaderBase, ABC):
         if self.current_position < len(self._data):
             data_batch = []
             label_batch = []
+            segmentation_batch = []
             for i in range(self.batch_size):
                 index = self.current_position + i
                 if index < len(self._data):
-                    patient_id, data_file = self._data[index]
-                    data_np = np.expand_dims(sitk.GetArrayFromImage(sitk.ReadImage(data_file)).transpose(), axis=0)
+                    label, data_file, segmentation_file = self._data[index]
+                    data_sitk = sitk.ReadImage(data_file)
+                    data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
                     data_batch.append(data_np)
-                    # TODO get label
-                    label_batch.append(1)
+                    label_batch.append(label)
+                    segmentation_sitk = sitk.ReadImage(segmentation_file)
+                    segmentation = [data_sitk.TransformPhysicalPointToIndex(segmentation_sitk.GetOrigin()),
+                                    segmentation_sitk.GetSize()]
+                    segmentation_batch.append(segmentation)
             batch = {"data": np.stack(data_batch),
-                     "label": np.stack(label_batch)}
+                     "label": np.stack(label_batch),
+                     "segmentation": np.stack(segmentation_batch)}
 
             self.current_position += self.number_of_threads_in_multithreaded * self.batch_size
             return batch
         else:
             self.reset()
             raise StopIteration
+
+
+class SampleFromSegmentation(AbstractTransform, ABC):
+    def __init__(self, size, coverage):
+        self.size = size
+        self.coverage = coverage
+
+    def __call__(self, **data_dict):
+        # TODO implement
+        return data_dict
 
 
 class PrepareForTF(AbstractTransform, ABC):
