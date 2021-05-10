@@ -69,7 +69,7 @@ class Crop:
     def __init__(self, data: sitk.Image, segmentation: sitk.Image, bb_size):
         self.segmentation = segmentation
         # place bb so that the segmentation is centered
-        self.offset = ((np.array(bb_size) - np.array(self.segmentation.GetSize())) / 2).astype(np.int)
+        self.offset = ((np.array(bb_size) - np.array(self.segmentation.GetSize())) / 2).astype(int)
         # adjust offset if resulting bb is out of bounds
         segmentation_origin_in_data = data.TransformPhysicalPointToIndex(segmentation.GetOrigin())
         self.offset = [seg_or if seg_or - off < 0 else off
@@ -90,7 +90,7 @@ class Crop:
     def roi(self):
         data_np = sitk.GetArrayFromImage(self.data).transpose()
         segmentation_size = self.segmentation.GetSize()
-        mask = np.ones_like(data_np, dtype=np.bool)
+        mask = np.ones_like(data_np, dtype=bool)
         clipped_offset = np.clip(self.offset, 0, None)
         mask[clipped_offset[0]:clipped_offset[0] + segmentation_size[0],
              clipped_offset[1]:clipped_offset[1] + segmentation_size[1],
@@ -102,7 +102,7 @@ class Crop:
     def seg(self):
         data_np = sitk.GetArrayFromImage(self.data).transpose()
         segmentation_np = sitk.GetArrayFromImage(self.segmentation).transpose()
-        segmentation_np = segmentation_np.sum(axis=0).astype(np.bool)
+        segmentation_np = segmentation_np.sum(axis=0).astype(bool)
         inner_offset = [max(-off, 0) for off in self.offset]
         data_size = self.data.GetSize()
         segmentation_np = segmentation_np[inner_offset[0]:inner_offset[0] + data_size[0],
@@ -133,7 +133,7 @@ def normalize(data, intensity_range, normalization_range):
     data_np = sitk.GetArrayFromImage(data)
     data_np = np.clip(data_np, intensity_range[0], intensity_range[1])
     data_np -= intensity_range[0]
-    data_np = data_np.astype(np.float)
+    data_np = data_np.astype(float)
     data_np /= intensity_range[1] - intensity_range[0]  # values are now between 0 and 1
     data_np *= normalization_range[1] - normalization_range[0]
     data_np += normalization_range[0]  # values are now in the normalization range
