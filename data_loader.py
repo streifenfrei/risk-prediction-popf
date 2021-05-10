@@ -3,10 +3,9 @@ from abc import ABC
 
 import SimpleITK as sitk
 import numpy as np
-import tensorflow as tf
 
-from batchgenerators.dataloading import SlimDataLoaderBase
-from batchgenerators.transforms import AbstractTransform
+from batchgenerators.dataloading import SlimDataLoaderBase, MultiThreadedAugmenter
+from batchgenerators.transforms import AbstractTransform, Compose
 
 
 def scan_data_directory(data_directory, crop="none"):
@@ -42,44 +41,61 @@ class DataLoader(SlimDataLoaderBase, ABC):
     def __init__(self,
                  data,
                  batch_size,
-                 number_of_threads_in_multithreaded=4):
+                 number_of_threads_in_multithreaded=4,
+                 epochs=1):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
         self._data = data
-        self.current_position = 0
+        self._current_position = 0
         self.was_initialized = False
+        self.epochs = epochs
+        self._current_epoch = 0
 
-    def reset(self):
-        self.current_position = self.thread_id * self.batch_size
+    def initialize(self):
+        self._current_epoch = 0
+        self._reset()
         self.was_initialized = True
+
+    def _reset(self):
+        self._current_position = self.thread_id * self.batch_size
 
     def generate_train_batch(self):
         if not self.was_initialized:
-            self.reset()
-        if self.current_position < len(self._data):
-            data_batch = []
-            label_batch = []
-            segmentation_batch = []
-            for i in range(self.batch_size):
-                index = self.current_position + i
-                if index < len(self._data):
-                    label, data_file, segmentation_file = self._data[index]
-                    data_sitk = sitk.ReadImage(data_file)
-                    data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
-                    data_batch.append(data_np)
-                    label_batch.append(label)
-                    segmentation_sitk = sitk.ReadImage(segmentation_file)
-                    segmentation = [data_sitk.TransformPhysicalPointToIndex(segmentation_sitk.GetOrigin()),
-                                    segmentation_sitk.GetSize()]
-                    segmentation_batch.append(segmentation)
-            batch = {"data": np.stack(data_batch),
-                     "label": np.stack(label_batch),
-                     "segmentation": np.stack(segmentation_batch)}
+            self.initialize()
+        if self._current_position >= len(self._data):
+            self._reset()
+            self._current_epoch += 1
+            if 0 < self.epochs <= self._current_epoch:
+                raise StopIteration
+        data_batch = []
+        label_batch = []
+        segmentation_batch = []
+        for i in range(self.batch_size):
+            index = self._current_position + i
+            if index < len(self._data):
+                label, data_file, segmentation_file = self._data[index]
+                data_sitk = sitk.ReadImage(data_file)
+                data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
+                data_batch.append(data_np)
+                label_batch.append(label)
+                segmentation_sitk = sitk.ReadImage(segmentation_file)
+                segmentation = [data_sitk.TransformPhysicalPointToIndex(segmentation_sitk.GetOrigin()),
+                                segmentation_sitk.GetSize()]
+                segmentation_batch.append(segmentation)
+        batch = {"data": np.stack(data_batch),
+                 "label": np.stack(label_batch),
+                 "segmentation": np.stack(segmentation_batch)}
 
-            self.current_position += self.number_of_threads_in_multithreaded * self.batch_size
-            return batch
-        else:
-            self.reset()
-            raise StopIteration
+        self._current_position += self.number_of_threads_in_multithreaded * self.batch_size
+        return batch
+
+
+def get_data_loader_tf(data, batch_size=1, transforms=None, epochs=1, threads=1):
+    transforms = [] if transforms is None else transforms
+    threads = min(int(np.ceil(len(data) / batch_size)), threads)
+    loader = DataLoader(data=data, batch_size=batch_size,
+                        epochs=epochs, number_of_threads_in_multithreaded=threads)
+    transforms = transforms + [PrepareForTF()]
+    return MultiThreadedAugmenter(loader, Compose(transforms), threads)
 
 
 class SampleFromSegmentation(AbstractTransform, ABC):
@@ -97,4 +113,4 @@ class PrepareForTF(AbstractTransform, ABC):
         data = data_dict["data"]
         data = np.moveaxis(data, 1, -1)
         label = data_dict["label"]
-        return tf.convert_to_tensor(data), tf.convert_to_tensor(label)
+        return data, label
