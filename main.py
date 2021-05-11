@@ -29,12 +29,7 @@ def get_transforms():
             PrepareForTF()]
 
 
-def main():
-    arg_parser = ArgumentParser()
-    arg_parser.add_argument("--config", "-c", default=os.path.join(script_dir, "default.config"))
-    args = arg_parser.parse_args()
-    with open(args.config, "r") as config_file:
-        config = yaml.load(config_file, Loader=yaml.FullLoader)
+def main(config):
     config_training = config["training"]
     config_data = config["data"]
     if config_data["sample"]:
@@ -105,4 +100,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    arg_parser = ArgumentParser()
+    arg_parser.add_argument("--config", "-c", default=os.path.join(script_dir, "default.config"))
+    args = arg_parser.parse_args()
+    with open(args.config, "r") as config_file:
+        config = yaml.load(config_file, Loader=yaml.FullLoader)
+    main(config)

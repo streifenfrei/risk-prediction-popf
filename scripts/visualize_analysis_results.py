@@ -92,21 +92,20 @@ def visualize_bb_analysis(precisions, precisions_std, precisions_min, recalls,
     print()
 
 
-def main():
+def main(file, hist_coverage, f_beta):
+    with open(file, "r") as file:
+        results = json.load(file)
+
+    visualize_histograms(results["histograms"], hist_coverage)
+    visualize_bb_analysis(results["precisions"], results["precisions_std"], results["precisions_min"],
+                          results["recalls"], results["recalls_std"],  results["recalls_min"],
+                          results["bb_range"], results["coverage"], f_beta)
+
+
+if __name__ == '__main__':
     arg_parser = ArgumentParser()
     arg_parser.add_argument("--file", "-f", type=str, required=True)
     arg_parser.add_argument("--hist_coverage", "-hc", type=float, default=0.95)
     arg_parser.add_argument("--f_beta", "-fb", type=float, default=2.35)
     args = arg_parser.parse_args()
-
-    with open(args.file, "r") as file:
-        results = json.load(file)
-
-    visualize_histograms(results["histograms"], args.hist_coverage)
-    visualize_bb_analysis(results["precisions"], results["precisions_std"], results["precisions_min"],
-                          results["recalls"], results["recalls_std"],  results["recalls_min"],
-                          results["bb_range"], results["coverage"], args.f_beta)
-
-
-if __name__ == '__main__':
-    main()
+    main(args.file, args.hist_coverage, args.f_beta)

@@ -15,14 +15,11 @@ def histogram(data):
     return np.histogram(data, bins=np.arange(HOUNSFIELD_BOUNDARIES[0], HOUNSFIELD_BOUNDARIES[1] + 1))[0]
 
 
-def main():
-    arg_parser = ArgumentParser()
-    arg_parser.add_argument("--data", "-d", type=str, required=True)
-    arg_parser.add_argument("--output", "-o", type=str, required=True)
-    args = arg_parser.parse_args()
+def main(data, output):
+
 
     dataset = []
-    for directory in os.scandir(args.data):
+    for directory in os.scandir(data):
         if directory.is_dir():
             try:
                 int(directory.name)
@@ -78,7 +75,7 @@ def main():
               f"{i + 1}/{len(search_space)} ({int(np.ceil(100 * i / len(search_space)))}%)", end="")
 
     # write results to file
-    results_file_path = os.path.join(args.output, "analysis_results.json")
+    results_file_path = os.path.join(output, "analysis_results.json")
     with open(results_file_path, "w") as results_file:
         results = {"histograms": histograms,
                    "bb_range": (tuple(min_bb_size.tolist()), tuple(max_bb_size.tolist())),
@@ -94,4 +91,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    arg_parser = ArgumentParser()
+    arg_parser.add_argument("--data", "-d", type=str, required=True)
+    arg_parser.add_argument("--output", "-o", type=str, required=True)
+    args = arg_parser.parse_args()
+    main(args.data, args.output)

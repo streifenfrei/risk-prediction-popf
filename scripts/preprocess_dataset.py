@@ -140,14 +140,7 @@ def normalize(data, intensity_range, normalization_range):
     return _np_to_sitk(data_np, data)
 
 
-def main():
-    arg_parser = ArgumentParser()
-    arg_parser.add_argument("--input", "-i", type=str, required=True)
-    arg_parser.add_argument("--config", "-c", type=str, required=True)
-    arg_parser.add_argument("--output", "-o", type=str, required=True)
-    args = arg_parser.parse_args()
-    with open(args.config, "r") as config_file:
-        config = yaml.load(config_file, Loader=yaml.FullLoader)
+def main(config, data, out):
     target_size = config["resampling"]["size"]
     target_spacing = config["resampling"]["spacing"]
     interpolator = INTERPOLATION_MAPPING[config["resampling"]["interpolation"]]
@@ -164,7 +157,7 @@ def main():
     normalization_range = config["normalization"]["target_range"]
 
     dataset = []
-    for patient_id, data_file, segmentation_file in data_iterator(args.input):
+    for patient_id, data_file, segmentation_file in data_iterator(data):
         dataset.append((patient_id, data_file, segmentation_file))
 
     # Resample (and calculate bounding box if required)
@@ -179,7 +172,7 @@ def main():
             continue
         data_sitk, segmentation_sitk = resample(data_sitk, segmentation_sitk, target_size, target_spacing, interpolator)
         data_sitk = clip_intensities(data_sitk)
-        output_directory = os.path.join(args.output, str(patient_id), "raw")
+        output_directory = os.path.join(out, str(patient_id), "raw")
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
             sitk.WriteImage(data_sitk, os.path.join(output_directory, "full.nrrd"))
@@ -196,7 +189,7 @@ def main():
 
     # Generate cropped data (and calculate intensity ranges if required)
     for i, (patient_id, _, _) in enumerate(dataset):
-        output_directory = os.path.join(args.output, str(patient_id), "raw")
+        output_directory = os.path.join(out, str(patient_id), "raw")
         data_sitk = sitk.ReadImage(os.path.join(output_directory, "full.nrrd"))
         if calculate_ir_raw:
             ir_raw = _update_intensity_range(ir_raw, data_sitk)
@@ -222,8 +215,8 @@ def main():
 
     # Normalize intensities
     for i, (patient_id, _, _) in enumerate(dataset):
-        raw_directory = os.path.join(args.output, str(patient_id), "raw")
-        output_directory = os.path.join(args.output, str(patient_id))
+        raw_directory = os.path.join(out, str(patient_id), "raw")
+        output_directory = os.path.join(out, str(patient_id))
         input_path = os.path.join(raw_directory, "full.nrrd")
         sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_raw, normalization_range),
                         os.path.join(output_directory, "full.nrrd"))
@@ -240,4 +233,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    arg_parser = ArgumentParser()
+    arg_parser.add_argument("--input", "-i", type=str, required=True)
+    arg_parser.add_argument("--config", "-c", type=str, required=True)
+    arg_parser.add_argument("--output", "-o", type=str, required=True)
+    args = arg_parser.parse_args()
+    with open(args.config, "r") as config_file:
+        config = yaml.load(config_file, Loader=yaml.FullLoader)
+    main(config, args.input, args.output)

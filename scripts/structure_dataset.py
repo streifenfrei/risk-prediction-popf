@@ -8,26 +8,20 @@ from shutil import copy2
 patient_id_pattern = "[0-9]{4}$"
 
 
-def main():
-    arg_parser = ArgumentParser()
-    arg_parser.add_argument("--data", "-d", type=str)
-    arg_parser.add_argument("--out", "-o", type=str)
-    arg_parser.add_argument("--action", "-a", type=str, choices=["copy", "sym", "none"], default="copy")
-    arg_parser.add_argument("--override", "-ov", action="store_true")
-    args = arg_parser.parse_args()
+def main(data, out, action, override):
     count = 0
     invalid_data_directories = []
-    for root, directories, files in os.walk(args.data):
+    for root, directories, files in os.walk(data):
         try:
             patient_id = int(os.path.basename(root))
             if not re.match(patient_id_pattern, str(patient_id)):
                 continue
         except ValueError:
             continue
-        out_path = os.path.join(args.out, str(patient_id))
-        if args.action != "none":
+        out_path = os.path.join(out, str(patient_id))
+        if action != "none":
             if os.path.exists(out_path):
-                if not args.override:
+                if not override:
                     print(f"Skipping {out_path} (already exists)")
                     continue
                 else:
@@ -44,13 +38,13 @@ def main():
         if len(segmentation_file) != 1 or len(data_file) != 1:
             print(f"Invalid data directory: {root}. Ignoring")
             invalid_data_directories.append(root)
-            if args.action != "none":
+            if action != "none":
                 shutil.rmtree(out_path)
             continue
-        if args.action == "copy":
+        if action == "copy":
             copy2(data_file[0], os.path.join(out_path, "data.nrrd"))
             copy2(segmentation_file[0], os.path.join(out_path, "data.seg.nrrd"))
-        elif args.action == "sym":
+        elif action == "sym":
             os.symlink(data_file[0], os.path.join(out_path, "data.nrrd"))
             os.symlink(segmentation_file[0], os.path.join(out_path, "data.seg.nrrd"))
         count += 1
@@ -60,4 +54,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    arg_parser = ArgumentParser()
+    arg_parser.add_argument("--data", "-d", type=str)
+    arg_parser.add_argument("--out", "-o", type=str)
+    arg_parser.add_argument("--action", "-a", type=str, choices=["copy", "sym", "none"], default="copy")
+    arg_parser.add_argument("--override", "-ov", action="store_true")
+    args = arg_parser.parse_args()
+    main(args.data, args.out, args.action, args.override)
+
