@@ -63,9 +63,6 @@ def main():
         # initialize datasets
         train = [dataset_true[x] for x in train_t] + [dataset_false[x] for x in train_f]
         validation = [dataset_true[x] for x in validation_t] + [dataset_false[x] for x in validation_f]
-        if config_data["sample"]:
-            train *= config_data["sample_count"]
-            validation *= config_data["sample_count"]
         random.shuffle(train)
         random.shuffle(validation)
         dl_train = get_data_loader_tf(train, config_data["batch_size"], transforms,
