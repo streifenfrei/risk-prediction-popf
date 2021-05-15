@@ -9,7 +9,7 @@ from batchgenerators.transforms import AbstractTransform, Compose
 
 
 def scan_data_directory(data_directory, crop="none"):
-    assert crop in ["none", "fixed", "roi", "seg"]
+    assert crop in ["none", "fixed", "roi", "seg", "all"]
     data = []
     for directory in os.scandir(data_directory):
         if directory.is_dir():
@@ -34,6 +34,8 @@ def scan_data_directory(data_directory, crop="none"):
                 data.append((label, data_roi, segmentation))
             elif crop == "seg" and os.path.exists(data_seg):
                 data.append((label, data_seg, segmentation))
+            elif crop == "all":
+                data.append(directory.path)
     return data
 
 
