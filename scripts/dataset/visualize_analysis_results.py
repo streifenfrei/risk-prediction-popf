@@ -5,11 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
-from scripts.analyze_dataset import LABELS
-from scripts.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE
+from scripts.dataset.analyze_dataset import LABELS
+from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE
 
 
-def _crop_histogram(histogram, coverage):
+def crop_histogram(histogram, coverage):
     mean = int(np.sum(histogram * np.arange(0, HOUNSFIELD_RANGE)))
     cropped_histogram = np.array([histogram[mean]])
     offset_left = 0
@@ -27,7 +27,7 @@ def visualize_histograms(histograms, coverage):
     fig, axs = plt.subplots(rows, 2, constrained_layout=True)
     for i, (histogram, label) in enumerate(zip(histograms, LABELS)):
         histogram = np.array(histogram)
-        histogram, cutoff_left, cutoff_right = _crop_histogram(histogram.astype(np.float) / np.sum(histogram), coverage)
+        histogram, cutoff_left, cutoff_right = crop_histogram(histogram.astype(np.float) / np.sum(histogram), coverage)
         row = int(i / 2)
         col = i % 2
         lower_boundary = HOUNSFIELD_BOUNDARIES[0] + cutoff_left

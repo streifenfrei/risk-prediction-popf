@@ -140,7 +140,7 @@ def normalize(data, intensity_range, normalization_range):
     return _np_to_sitk(data_np, data)
 
 
-def main(config, data, out):
+def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True):
     target_size = config["resampling"]["size"]
     target_spacing = config["resampling"]["spacing"]
     interpolator = INTERPOLATION_MAPPING[config["resampling"]["interpolation"]]
@@ -170,14 +170,15 @@ def main(config, data, out):
         except RuntimeError:
             invalid_data.append(entry)
             continue
-        data_sitk, segmentation_sitk = resample(data_sitk, segmentation_sitk, target_size, target_spacing, interpolator)
-        data_sitk = clip_intensities(data_sitk)
-        output_directory = os.path.join(out, str(patient_id), "raw")
-        if not os.path.exists(output_directory):
-            os.makedirs(output_directory)
-            sitk.WriteImage(data_sitk, os.path.join(output_directory, "full.nrrd"))
-            sitk.WriteImage(segmentation_sitk, os.path.join(output_directory, "segmentation.seg.nrrd"))
-        print(f"\rResampling: {i + 1}/{len(dataset)}", end="")
+        if do_resample:
+            data_sitk, segmentation_sitk = resample(data_sitk, segmentation_sitk, target_size, target_spacing, interpolator)
+            data_sitk = clip_intensities(data_sitk)
+            output_directory = os.path.join(out, str(patient_id), "raw")
+            if not os.path.exists(output_directory):
+                os.makedirs(output_directory)
+                sitk.WriteImage(data_sitk, os.path.join(output_directory, "full.nrrd"))
+                sitk.WriteImage(segmentation_sitk, os.path.join(output_directory, "segmentation.seg.nrrd"))
+            print(f"\rResampling: {i + 1}/{len(dataset)}", end="")
         if calculate_bb:
             bb_size = [max(x, y) for x, y in zip(bb_size, segmentation_sitk.GetSize())]
     for entry in invalid_data:
@@ -191,45 +192,47 @@ def main(config, data, out):
     for i, (patient_id, _, _) in enumerate(dataset):
         output_directory = os.path.join(out, str(patient_id), "raw")
         data_sitk = sitk.ReadImage(os.path.join(output_directory, "full.nrrd"))
+        if do_crop:
+            segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
+            crop = Crop(data_sitk, segmentation_sitk, bb_size)
+            # fixed bb crop
+            data_sitk = crop.fixed()
+            sitk.WriteImage(data_sitk, os.path.join(output_directory, "fixed.nrrd"))
+            # roi crop
+            data_sitk = crop.roi()
+            sitk.WriteImage(data_sitk, os.path.join(output_directory, "roi.nrrd"))
+            # segmentation crop
+            data_sitk = crop.seg()
+            sitk.WriteImage(crop.seg(), os.path.join(output_directory, "seg.nrrd"))
+            print(f"\rCropping: {i + 1}/{len(dataset)}", end="")
         if calculate_ir_raw:
             ir_raw = _update_intensity_range(ir_raw, data_sitk)
-        segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
-        crop = Crop(data_sitk, segmentation_sitk, bb_size)
-        # fixed bb crop
-        data_sitk = crop.fixed()
-        sitk.WriteImage(data_sitk, os.path.join(output_directory, "fixed.nrrd"))
         if calculate_ir_fixed:
             ir_fixed = _update_intensity_range(ir_fixed, data_sitk)
-        # roi crop
-        data_sitk = crop.roi()
-        sitk.WriteImage(data_sitk, os.path.join(output_directory, "roi.nrrd"))
         if calculate_ir_roi:
             ir_roi = _update_intensity_range(ir_roi, data_sitk, masked=True)
-        # segmentation crop
-        data_sitk = crop.seg()
-        sitk.WriteImage(crop.seg(), os.path.join(output_directory, "seg.nrrd"))
         if calculate_ir_seg:
             ir_seg = _update_intensity_range(ir_seg, data_sitk, masked=True)
-        print(f"\rCropping: {i + 1}/{len(dataset)}", end="")
     print()
 
     # Normalize intensities
-    for i, (patient_id, _, _) in enumerate(dataset):
-        raw_directory = os.path.join(out, str(patient_id), "raw")
-        output_directory = os.path.join(out, str(patient_id))
-        input_path = os.path.join(raw_directory, "full.nrrd")
-        sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_raw, normalization_range),
-                        os.path.join(output_directory, "full.nrrd"))
-        input_path = os.path.join(raw_directory, "fixed.nrrd")
-        sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_fixed, normalization_range),
-                        os.path.join(output_directory, "fixed.nrrd"))
-        input_path = os.path.join(raw_directory, "roi.nrrd")
-        sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_roi, normalization_range),
-                        os.path.join(output_directory, "roi.nrrd"))
-        input_path = os.path.join(raw_directory, "seg.nrrd")
-        sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_seg, normalization_range),
-                        os.path.join(output_directory, "seg.nrrd"))
-        print(f"\rNormalizing: {i + 1}/{len(dataset)}", end="")
+    if do_normalize:
+        for i, (patient_id, _, _) in enumerate(dataset):
+            raw_directory = os.path.join(out, str(patient_id), "raw")
+            output_directory = os.path.join(out, str(patient_id))
+            input_path = os.path.join(raw_directory, "full.nrrd")
+            sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_raw, normalization_range),
+                            os.path.join(output_directory, "full.nrrd"))
+            input_path = os.path.join(raw_directory, "fixed.nrrd")
+            sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_fixed, normalization_range),
+                            os.path.join(output_directory, "fixed.nrrd"))
+            input_path = os.path.join(raw_directory, "roi.nrrd")
+            sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_roi, normalization_range),
+                            os.path.join(output_directory, "roi.nrrd"))
+            input_path = os.path.join(raw_directory, "seg.nrrd")
+            sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_seg, normalization_range),
+                            os.path.join(output_directory, "seg.nrrd"))
+            print(f"\rNormalizing: {i + 1}/{len(dataset)}", end="")
 
 
 if __name__ == '__main__':
