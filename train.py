@@ -1,16 +1,15 @@
 import json
 import os
-import random
 from argparse import ArgumentParser
 
 import tensorflow as tf
 import numpy as np
 import yaml
 from batchgenerators.transforms import RandomShiftTransform, MirrorTransform
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 
 from models import simple_net, squeeze_net
-from data_loader import scan_data_directory, SampleFromSegmentation, get_data_loader_tf
+from data_loader import scan_data_directory, SampleFromSegmentation, get_tf_dataset, get_data_augmenter
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_mapping = {
@@ -29,6 +28,12 @@ def get_transforms():
             RandomShiftTransform(shift_mu=0, shift_sigma=3, p_per_channel=1)]
 
 
+def _fit_batch_size(data_count, max_batch_size):
+    for i in range(max_batch_size, 0, -1):
+        if data_count % i == 0:
+            return i
+
+
 def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
     config_training = config["training"]
@@ -43,7 +48,7 @@ def main(config, custom_model_generator=None):
         transforms.append(SampleFromSegmentation(config_data["sample_size"], config_data["sample_coverage"]))
         input_shape = [*config_data["sample_size"], 1]
     else:
-        dummy_loader = get_data_loader_tf(dataset[:1])
+        dummy_loader = get_data_augmenter(dataset[:1])
         input_shape = next(dummy_loader)[0].shape[-4:]
         dummy_loader._finish()
     transforms += get_transforms()
@@ -57,13 +62,14 @@ def main(config, custom_model_generator=None):
         # initialize datasets
         train = [dataset[i] for i in train]
         validation = [dataset[i] for i in validation]
-        dl_train = get_data_loader_tf(train, config_data["batch_size"], transforms,
-                                      config_training["epochs"], config_data["loader_threads"])
-        train_steps = np.ceil(len(train) / config_data["batch_size"])
+        batch_size = _fit_batch_size(len(train), config_data["batch_size"])
+        train_augmenter = get_data_augmenter(train, batch_size,
+                                             transforms, config_data["loader_threads"])
+        train_dl = get_tf_dataset(train_augmenter, input_shape)
         #   cache validation data
-        dl_validation = get_data_loader_tf(validation, len(validation))
-        validation_data = dl_validation.__next__()
-        dl_validation._finish()
+        val_augmenter = get_data_augmenter(validation, len(validation))
+        validation_data = val_augmenter.__next__()
+        val_augmenter._finish()
         # initialize model
         model = load_model(config["model"], input_shape)
         model.compile(optimizer=config_training["optimizer"],
@@ -87,13 +93,11 @@ def main(config, custom_model_generator=None):
             initial_epoch = int(os.path.splitext(os.path.basename(latest_checkpoint))[0])
         # train
         tf.keras.backend.clear_session()
-        history = model.fit(x=dl_train,
+        history = model.fit(x=train_dl,
                             initial_epoch=initial_epoch,
                             epochs=config_training["epochs"],
                             validation_data=validation_data,
-                            steps_per_epoch=train_steps,
                             callbacks=[checkpoint_callback, early_stopping_callback, tensorboard_callback])
-        dl_train._finish()
         # save summary of fold
         fold_summary = {
             "auc": max(history.history["val_auc"]),
@@ -104,7 +108,7 @@ def main(config, custom_model_generator=None):
 
     # save summary of cross validation
     cv_summary = {"auc_mean": 0, "epochs_mean": 0}
-    for i in range(1, config_training["folds"]+1):
+    for i in range(1, config_training["folds"] + 1):
         fold_summary_file = os.path.join(config["workspace"], "cross_validation", str(i), "logs", "summary.json")
         with open(fold_summary_file, "r") as file:
             fold_summary = json.load(file)

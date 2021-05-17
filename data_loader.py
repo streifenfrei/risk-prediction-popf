@@ -1,8 +1,10 @@
+import csv
 import os
 from abc import ABC
 
 import SimpleITK as sitk
 import numpy as np
+import tensorflow as tf
 
 from batchgenerators.dataloading import SlimDataLoaderBase, MultiThreadedAugmenter
 from batchgenerators.transforms import AbstractTransform, Compose
@@ -10,6 +12,11 @@ from batchgenerators.transforms import AbstractTransform, Compose
 
 def scan_data_directory(data_directory, crop="none"):
     assert crop in ["none", "fixed", "roi", "seg", "all"]
+    labels = {}
+    with open(os.path.join(data_directory, "labels.csv"), "r") as file:
+        reader = csv.reader(file)
+        for row in reader:
+            labels[int(row[0])] = int(row[1])
     data = []
     for directory in os.scandir(data_directory):
         if directory.is_dir():
@@ -17,9 +24,10 @@ def scan_data_directory(data_directory, crop="none"):
                 patient_id = int(directory.name)
             except ValueError:
                 continue
-            # TODO load label
-            import random
-            label = random.choice([0, 1])
+            if patient_id not in labels:
+                print(f"No label found for patient {patient_id}")
+                continue
+            label = labels[patient_id]
 
             data_full = os.path.join(directory.path, "full.nrrd")
             data_fixed = os.path.join(directory.path, "fixed.nrrd")
@@ -91,13 +99,27 @@ class DataLoader(SlimDataLoaderBase, ABC):
         return batch
 
 
-def get_data_loader_tf(data, batch_size=1, transforms=None, epochs=1, threads=1):
+def get_data_augmenter(data, batch_size=1, transforms=None, threads=1):
     transforms = [] if transforms is None else transforms
     threads = min(int(np.ceil(len(data) / batch_size)), threads)
-    loader = DataLoader(data=data, batch_size=batch_size,
-                        epochs=epochs, number_of_threads_in_multithreaded=threads)
+    loader = DataLoader(data=data, batch_size=batch_size, number_of_threads_in_multithreaded=threads)
     transforms = transforms + [PrepareForTF()]
     return MultiThreadedAugmenter(loader, Compose(transforms), threads)
+
+
+def get_tf_dataset(augmenter, input_shape):
+    batch_size = augmenter.generator.batch_size
+
+    def generator():
+        augmenter.restart()
+        for batch in augmenter:
+            yield batch
+        augmenter._finish()
+
+    tf_dataset = tf.data.Dataset.from_generator(generator, output_signature=(
+        tf.TensorSpec(shape=(None, *input_shape), dtype=tf.float32),
+        tf.TensorSpec(shape=batch_size, dtype=tf.int32)))
+    return tf_dataset
 
 
 class SampleFromSegmentation(AbstractTransform, ABC):
@@ -115,4 +137,4 @@ class PrepareForTF(AbstractTransform, ABC):
         data = data_dict["data"]
         data = np.moveaxis(data, 1, -1)
         label = data_dict["label"]
-        return data, label
+        return tf.convert_to_tensor(data, dtype=tf.float32), tf.convert_to_tensor(label, dtype=tf.int32)
