@@ -5,8 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
-from scripts.dataset.analyze_dataset import LABELS
-from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE
+from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE, LABELS
 
 
 def crop_histogram(histogram, coverage):

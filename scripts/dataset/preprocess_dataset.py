@@ -1,11 +1,13 @@
 import os
+import shutil
 from argparse import ArgumentParser
+from logging import warning
 
 import SimpleITK as sitk
 import yaml
-
 import numpy as np
 
+LABELS = ["full", "fixed", "roi", "seg"]
 MASKING_VALUE = -2000  # just has to be smaller than lower hounsfield boundary
 HOUNSFIELD_BOUNDARIES = [-1024, 3071]
 HOUNSFIELD_RANGE = HOUNSFIELD_BOUNDARIES[1] - HOUNSFIELD_BOUNDARIES[0]
@@ -78,8 +80,10 @@ class Crop:
                        for seg_or, off, bb_sz, data_sz in
                        zip(segmentation_origin_in_data, self.offset, bb_size, data.GetSize())]
         cropped_origin = np.array(segmentation_origin_in_data) - self.offset
-        assert all(cr_or >= 0 for cr_or in cropped_origin)
-        assert all(cr_or + bb_s <= data_s for cr_or, bb_s, data_s in zip(cropped_origin, bb_size, data.GetSize()))
+        assert all(cr_or >= 0 for cr_or in cropped_origin), \
+            f"Data size: {data.GetSize()}, BB size: {bb_size}, BB origin: {cropped_origin}"
+        assert all(cr_or + bb_s <= data_s for cr_or, bb_s, data_s in zip(cropped_origin, bb_size, data.GetSize())), \
+            f"Data size: {data.GetSize()}, BB size: {bb_size}, BB origin: {cropped_origin}"
         self.data = data[cropped_origin[0]:cropped_origin[0] + bb_size[0],
                          cropped_origin[1]:cropped_origin[1] + bb_size[1],
                          cropped_origin[2]:cropped_origin[2] + bb_size[2]]
@@ -130,7 +134,7 @@ def _update_intensity_range(ir, data, masked=False):
 
 
 def normalize(data, intensity_range, normalization_range):
-    data_np = sitk.GetArrayFromImage(data)
+    data_np = np.array(sitk.GetArrayFromImage(data))
     data_np = np.clip(data_np, intensity_range[0], intensity_range[1])
     data_np -= intensity_range[0]
     data_np = data_np.astype(float)
@@ -140,20 +144,21 @@ def normalize(data, intensity_range, normalization_range):
     return _np_to_sitk(data_np, data)
 
 
-def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True):
+def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, crops=None):
+    if crops is None:
+        crops = LABELS
+    crops = set(crops)
+    assert len(crops - set(LABELS)) == 0, f"invalid crops argument: {crops}"
     target_size = config["resampling"]["size"]
     target_spacing = config["resampling"]["spacing"]
     interpolator = INTERPOLATION_MAPPING[config["resampling"]["interpolation"]]
     bb_size, calculate_bb = ([-np.inf, -np.inf, -np.inf], True) \
         if config["cropping"]["bb_size"] == "auto" else (config["cropping"]["bb_size"], False)
-    ir_raw, calculate_ir_raw = ([np.inf, -np.inf], True) \
-        if config["normalization"]["ir_raw"] == "auto" else (config["normalization"]["ir_raw"], False)
-    ir_fixed, calculate_ir_fixed = ([np.inf, -np.inf], True) \
-        if config["normalization"]["ir_fixed"] == "auto" else (config["normalization"]["ir_fixed"], False)
-    ir_roi, calculate_ir_roi = ([np.inf, -np.inf], True) \
-        if config["normalization"]["ir_roi"] == "auto" else (config["normalization"]["ir_roi"], False)
-    ir_seg, calculate_ir_seg = ([np.inf, -np.inf], True) \
-        if config["normalization"]["ir_seg"] == "auto" else (config["normalization"]["ir_seg"], False)
+    intensity_ranges = {}
+    for crop in crops:
+        intensity_ranges[crop] = [[np.inf, -np.inf], True] \
+            if config["normalization"][f"ir_{crop}"] == "auto" \
+            else [config["normalization"][f"ir_{crop}"], False]
     normalization_range = config["normalization"]["target_range"]
 
     dataset = []
@@ -196,43 +201,38 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True):
             segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
             crop = Crop(data_sitk, segmentation_sitk, bb_size)
             # fixed bb crop
-            data_sitk = crop.fixed()
-            sitk.WriteImage(data_sitk, os.path.join(output_directory, "fixed.nrrd"))
+            if "fixed" in crops:
+                data_sitk = crop.fixed()
+                sitk.WriteImage(data_sitk, os.path.join(output_directory, "fixed.nrrd"))
             # roi crop
-            data_sitk = crop.roi()
-            sitk.WriteImage(data_sitk, os.path.join(output_directory, "roi.nrrd"))
+            if "roi" in crops:
+                data_sitk = crop.roi()
+                sitk.WriteImage(data_sitk, os.path.join(output_directory, "roi.nrrd"))
             # segmentation crop
-            data_sitk = crop.seg()
-            sitk.WriteImage(crop.seg(), os.path.join(output_directory, "seg.nrrd"))
+            if "seg" in crops:
+                data_sitk = crop.seg()
+                sitk.WriteImage(crop.seg(), os.path.join(output_directory, "seg.nrrd"))
             print(f"\rCropping: {i + 1}/{len(dataset)}", end="")
-        if calculate_ir_raw:
-            ir_raw = _update_intensity_range(ir_raw, data_sitk)
-        if calculate_ir_fixed:
-            ir_fixed = _update_intensity_range(ir_fixed, data_sitk)
-        if calculate_ir_roi:
-            ir_roi = _update_intensity_range(ir_roi, data_sitk, masked=True)
-        if calculate_ir_seg:
-            ir_seg = _update_intensity_range(ir_seg, data_sitk, masked=True)
+        for crop in crops:
+            if intensity_ranges[crop][1]:
+                intensity_ranges[crop][0] = _update_intensity_range(intensity_ranges[crop][0], data_sitk)
     print()
-
     # Normalize intensities
     if do_normalize:
         for i, (patient_id, _, _) in enumerate(dataset):
             raw_directory = os.path.join(out, str(patient_id), "raw")
             output_directory = os.path.join(out, str(patient_id))
-            input_path = os.path.join(raw_directory, "full.nrrd")
-            sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_raw, normalization_range),
-                            os.path.join(output_directory, "full.nrrd"))
-            input_path = os.path.join(raw_directory, "fixed.nrrd")
-            sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_fixed, normalization_range),
-                            os.path.join(output_directory, "fixed.nrrd"))
-            input_path = os.path.join(raw_directory, "roi.nrrd")
-            sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_roi, normalization_range),
-                            os.path.join(output_directory, "roi.nrrd"))
-            input_path = os.path.join(raw_directory, "seg.nrrd")
-            sitk.WriteImage(normalize(sitk.ReadImage(input_path), ir_seg, normalization_range),
-                            os.path.join(output_directory, "seg.nrrd"))
+            for crop in crops:
+                input_path = os.path.join(raw_directory, f"{crop}.nrrd")
+                sitk.WriteImage(normalize(sitk.ReadImage(input_path), intensity_ranges[crop][0], normalization_range),
+                                os.path.join(output_directory, f"{crop}.nrrd"))
             print(f"\rNormalizing: {i + 1}/{len(dataset)}", end="")
+
+    labels_file = os.path.join(data, "labels.csv")
+    if os.path.exists(labels_file):
+        shutil.copyfile(labels_file, os.path.join(out, "labels.csv"))
+    else:
+        warning("No labels.csv found.")
 
 
 if __name__ == '__main__':

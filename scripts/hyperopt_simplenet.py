@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-import traceback
 from argparse import ArgumentParser
 
 import yaml
@@ -40,12 +39,14 @@ def objective(params):
         bounding_box = np.unravel_index(i, f_scores.shape) + np.array(analysis_results["bb_range"][0])
         if tuple(bounding_box) != tuple(preprocess_config["cropping"]["bb_size"]):
             preprocess_config["cropping"]["bb_size"] = bounding_box
-            preprocess_dataset.main(preprocess_config, data_dir, pp_data_dir, do_resample=False, do_normalize=False)
+            preprocess_dataset.main(preprocess_config, data_dir, pp_data_dir, do_resample=False,
+                                    do_normalize=False, crops=[crop])
         histogram = analyze_dataset.analyze(pp_data_dir, do_bounding_boxes=False)["histograms"][LABELS.index(crop)]
         _, i_min, i_max = visualize_analysis_results.crop_histogram(histogram, ir_coverage)
         if (i_min, i_max) != preprocess_config["normalization"][f"ir_{crop}"]:
             preprocess_config["normalization"][f"ir_{crop}"] = (i_min, i_max)
-            preprocess_dataset.main(preprocess_config, data_dir, pp_data_dir, do_resample=False, do_crop=False)
+            preprocess_dataset.main(preprocess_config, data_dir, pp_data_dir, do_resample=False,
+                                    do_crop=False, crops=[crop])
 
         # train
         if os.path.exists(training_config["workspace"]):
@@ -54,6 +55,7 @@ def objective(params):
 
         def get_model(input_shape):
             return models.simple_net.get_model(input_shape, dropout=dropout)
+
         train.main(training_config, custom_model_generator=get_model)
         with open(os.path.join(training_config["workspace"], "summary.json"), "r") as file:
             summary = json.load(file)

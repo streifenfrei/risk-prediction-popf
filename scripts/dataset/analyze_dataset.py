@@ -7,9 +7,7 @@ import SimpleITK as sitk
 import numpy as np
 
 from data_loader import scan_data_directory
-from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE
-
-LABELS = ["full", "fixed", "roi", "seg"]
+from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE, LABELS
 
 
 def histogram(data):
@@ -18,12 +16,12 @@ def histogram(data):
 
 def analyze(dataset, do_histograms=True, do_bounding_boxes=True):
     dataset = scan_data_directory(dataset, crop="all")
-
+    results = {}
     # collect data (histograms, bounding boxes)
     histograms = [np.zeros(HOUNSFIELD_RANGE, dtype=np.int) for _ in range(len(LABELS))]
     rois = []
-    min_bb_size = [np.inf, np.inf, np.inf]
-    max_bb_size = [-np.inf, -np.inf, -np.inf]
+    min_bb_size = np.array([np.inf, np.inf, np.inf])
+    max_bb_size = np.array([-np.inf, -np.inf, -np.inf])
     for i, directory in enumerate(dataset):
         segmentation_sitk = sitk.ReadImage(os.path.join(directory, "raw", "segmentation.seg.nrrd"))
         if do_histograms:
@@ -31,27 +29,28 @@ def analyze(dataset, do_histograms=True, do_bounding_boxes=True):
             data_np_list = [sitk.GetArrayFromImage(d_sitk) for d_sitk in data_sitk_list]
             for data_np, histo in zip(data_np_list, histograms):
                 histo += histogram(data_np)
+        if do_bounding_boxes:
             min_bb_size = np.array([min(x, y) for x, y in zip(min_bb_size, segmentation_sitk.GetSize())])
             max_bb_size = np.array([max(x, y + 1) for x, y in zip(max_bb_size, segmentation_sitk.GetSize())])
-        rois.append(np.array(segmentation_sitk.GetSize()))
+            rois.append(np.array(segmentation_sitk.GetSize()))
         print(f"\rCollect data: {i + 1}/{len(dataset)}", end="")
     print()
     for i, histo in enumerate(histograms):
         histograms[i] = (histo.astype(np.float) / np.sum(histo)).tolist()
-
-    # calculate precision and recall for all meaningful bounding boxes
-    rois = np.array(rois)
-    rois_volumes = np.prod(rois, axis=1)
-    search_space = list(product(*[range(lower, upper) for lower, upper in zip(min_bb_size, max_bb_size)]))
-    precisions = np.zeros(max_bb_size - min_bb_size)
-    precisions_std = np.zeros(max_bb_size - min_bb_size)
-    precisions_min = np.zeros(max_bb_size - min_bb_size)
-    recalls = np.zeros(max_bb_size - min_bb_size)
-    recalls_std = np.zeros(max_bb_size - min_bb_size)
-    recalls_min = np.zeros(max_bb_size - min_bb_size)
-    coverage = np.zeros(max_bb_size - min_bb_size)
+    results["histograms"] = histograms
 
     if do_bounding_boxes:
+        # calculate precision and recall for all meaningful bounding boxes
+        rois = np.array(rois)
+        rois_volumes = np.prod(rois, axis=1)
+        search_space = list(product(*[range(lower, upper) for lower, upper in zip(min_bb_size, max_bb_size)]))
+        precisions = np.zeros(max_bb_size - min_bb_size)
+        precisions_std = np.zeros(max_bb_size - min_bb_size)
+        precisions_min = np.zeros(max_bb_size - min_bb_size)
+        recalls = np.zeros(max_bb_size - min_bb_size)
+        recalls_std = np.zeros(max_bb_size - min_bb_size)
+        recalls_min = np.zeros(max_bb_size - min_bb_size)
+        coverage = np.zeros(max_bb_size - min_bb_size)
         for i, bounding_box in enumerate(search_space):
             x, y, z = bounding_box - min_bb_size
             bounding_box = np.array(bounding_box)
@@ -68,16 +67,17 @@ def analyze(dataset, do_histograms=True, do_bounding_boxes=True):
             coverage[x][y][z] = (np.count_nonzero(current_recalls == 1.)) / len(rois)
             print(f"\rAnalyze bounding boxes in range [{min_bb_size}, {max_bb_size}]: "
                   f"{i + 1}/{len(search_space)} ({int(np.ceil(100 * i / len(search_space)))}%)", end="")
-
-    return {"histograms": histograms,
-            "bb_range": (tuple(min_bb_size.tolist()), tuple(max_bb_size.tolist())),
-            "precisions": precisions.tolist(),
-            "precisions_std": precisions_std.tolist(),
-            "precisions_min": precisions_min.tolist(),
-            "recalls": recalls.tolist(),
-            "recalls_std": recalls_std.tolist(),
-            "recalls_min": recalls_min.tolist(),
-            "coverage": coverage.tolist()}
+        results = {**results,
+                   "histograms": histograms,
+                   "bb_range": (tuple(min_bb_size.tolist()), tuple(max_bb_size.tolist())),
+                   "precisions": precisions.tolist(),
+                   "precisions_std": precisions_std.tolist(),
+                   "precisions_min": precisions_min.tolist(),
+                   "recalls": recalls.tolist(),
+                   "recalls_std": recalls_std.tolist(),
+                   "recalls_min": recalls_min.tolist(),
+                   "coverage": coverage.tolist()}
+    return results
 
 
 def main(data, output):
