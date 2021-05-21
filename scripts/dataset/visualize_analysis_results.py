@@ -63,9 +63,12 @@ def visualize_bb_analysis(precisions, precisions_std, precisions_min, recalls,
     f_scores = f_score(precisions, recalls, f_beta)
     f_scores_std = f_score(precisions + precisions_std, recalls + recalls_std, f_beta) - f_scores
     f_scores_min = f_score(precisions - precisions_min, recalls - recalls_min, f_beta)
-    _3d_visualization(precisions, title="precisions")
-    _3d_visualization(recalls, title="recalls")
-    _3d_visualization(f_scores, title="f_scores")
+    try:
+        _3d_visualization(precisions, title="precisions")
+        _3d_visualization(recalls, title="recalls")
+        _3d_visualization(f_scores, title="f_scores")
+    except RuntimeError:
+        pass
     print(f"Best bounding boxes (f_beta = {f_beta}):")
 
     def _print_results(index):
@@ -104,7 +107,7 @@ def main(file, hist_coverage, f_beta):
 if __name__ == '__main__':
     arg_parser = ArgumentParser()
     arg_parser.add_argument("--file", "-f", type=str, required=True)
-    arg_parser.add_argument("--hist_coverage", "-hc", type=float, default=0.95)
+    arg_parser.add_argument("--hist_coverage", "-hc", type=float, default=0.98)
     arg_parser.add_argument("--f_beta", "-fb", type=float, default=2.35)
     args = arg_parser.parse_args()
     main(args.file, args.hist_coverage, args.f_beta)
