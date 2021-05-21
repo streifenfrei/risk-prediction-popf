@@ -3,7 +3,6 @@ import os
 from argparse import ArgumentParser
 
 import tensorflow as tf
-import numpy as np
 import yaml
 from batchgenerators.transforms import RandomShiftTransform, MirrorTransform
 from sklearn.model_selection import StratifiedKFold
