@@ -77,7 +77,7 @@ def main(config):
     global workspace, data_dir, preprocess_config, training_config, analysis_results
     workspace = config["workspace"]
     data_dir = config["data"]
-    with open(os.path.join(script_dir, "dataset", "preprocess.config")) as file:
+    with open(os.path.join(script_dir, "../dataset", "preprocess.config")) as file:
         preprocess_config = yaml.load(file)
     with open(config["train_config"]) as file:
         training_config = yaml.load(file)
