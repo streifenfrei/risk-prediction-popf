@@ -5,7 +5,9 @@ from argparse import ArgumentParser
 from glob import glob
 from shutil import copy2
 
-patient_id_pattern = "[0-9]{4}$"
+patient_id_pattern = "UKD_[0-9]{4}$"
+data_file_pattern = "{root}/CT/NRRD/CT_{id}.nrrd"
+segmentation_file_pattern = "{root}/RoI/combined.nrrd"
 
 
 def main(data, out, action, override):
@@ -27,14 +29,8 @@ def main(data, out, action, override):
                 else:
                     shutil.rmtree(out_path)
             os.mkdir(out_path)
-        if "CT" in directories and "ROI" in directories:
-            data_file = glob(f"{root}/CT/*.nrrd")
-            segmentation_file = glob(f"{root}/ROI/*.seg.nrrd")
-        else:
-            nrrd_files = set(glob(f"{root}/*.nrrd"))
-            segmentation_file = set([x for x in nrrd_files if x[-8:] == "seg.nrrd"])
-            data_file = list(nrrd_files - segmentation_file)
-            segmentation_file = list(segmentation_file)
+        data_file = glob(data_file_pattern.format(root=root, id=patient_id))
+        segmentation_file = glob(segmentation_file_pattern.format(root=root, id=patient_id))
         if len(segmentation_file) != 1 or len(data_file) != 1:
             print(f"Invalid data directory: {root}. Ignoring")
             invalid_data_directories.append(root)
