@@ -2,10 +2,15 @@ import os
 import shutil
 from argparse import ArgumentParser
 from logging import warning
+import re
 
 import SimpleITK as sitk
 import yaml
 import numpy as np
+
+PATIENT_ID_PATTERN = "UKD_{id}$"
+DATA_FILE_PATTERN = "CT/NRRD/CT_{id}.nrrd"
+SEGMENTATION_FILE_PATTERN = "RoI/combined.nrrd"
 
 LABELS = ["full", "fixed", "roi", "seg"]
 MASKING_VALUE = -2000  # just has to be smaller than lower hounsfield boundary
@@ -19,19 +24,19 @@ INTERPOLATION_MAPPING = {
 
 
 def data_iterator(data_directory):
+    pattern = PATIENT_ID_PATTERN.format(id="([0-9]{4})")
     for root, _, files in os.walk(data_directory):
-        try:
-            patient_id = int(os.path.basename(root))
-        except ValueError:
+        match = re.search(pattern, os.path.basename(root))
+        if match:
+            patient_id = int(match.group(1))
+        else:
             continue
-        nrrd_files = set([x for x in files if x[-4:] == "nrrd"])
-        segmentation_file = set([x for x in nrrd_files if x[-8:] == "seg.nrrd"])
-        data_file = nrrd_files - segmentation_file
-        if len(segmentation_file) != 1 or len(data_file) != 1:
+        data_file = os.path.join(root, DATA_FILE_PATTERN.format(id=patient_id))
+        segmentation_file = os.path.join(root, SEGMENTATION_FILE_PATTERN.format(id=patient_id))
+        if not (os.path.exists(data_file) and os.path.isfile(data_file)) or \
+                not (os.path.exists(segmentation_file) and os.path.isfile(data_file)):
             print(f"Invalid data directory {root}. Ignoring")
             continue
-        data_file = os.path.join(root, list(data_file)[0])
-        segmentation_file = os.path.join(root, list(segmentation_file)[0])
         yield patient_id, data_file, segmentation_file
 
 
@@ -160,6 +165,7 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             if config["normalization"][f"ir_{crop}"] == "auto" \
             else [config["normalization"][f"ir_{crop}"], False]
     normalization_range = config["normalization"]["target_range"]
+    labels_file = config["labels"]
 
     dataset = []
     for patient_id, data_file, segmentation_file in data_iterator(data):
@@ -228,11 +234,10 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
                                 os.path.join(output_directory, f"{crop}.nrrd"))
             print(f"\rNormalizing: {i + 1}/{len(dataset)}", end="")
 
-    labels_file = os.path.join(data, "labels.csv")
     if os.path.exists(labels_file):
         shutil.copyfile(labels_file, os.path.join(out, "labels.csv"))
     else:
-        warning("No labels.csv found.")
+        warning(f"{labels_file} not found.")
 
 
 if __name__ == '__main__':
