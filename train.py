@@ -9,7 +9,7 @@ from batchgenerators.transforms import RandomShiftTransform, MirrorTransform
 from sklearn.model_selection import StratifiedKFold
 
 from models import simple_net, squeeze_net
-from data_loader import scan_data_directory, SampleFromSegmentation, get_tf_dataset, get_data_augmenter
+from data_loader import scan_data_directory, get_tf_dataset, get_data_augmenter
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_mapping = {
@@ -38,20 +38,16 @@ def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
     config_training = config["training"]
     config_data = config["data"]
-    if config_data["sample"]:
-        config_data["crop"] = "none"
     dataset = scan_data_directory(config_data["path"], crop=config_data["crop"])
     k_fold = StratifiedKFold(n_splits=config_training["folds"], shuffle=False)
-    # augmentation
-    transforms = []
+    sample_size = config_data["sample_size"] if config_data["sample"] else None
     if config_data["sample"]:
-        transforms.append(SampleFromSegmentation(config_data["sample_size"], config_data["sample_coverage"]))
-        input_shape = [*config_data["sample_size"], 1]
+        input_shape = [*sample_size, 1]
     else:
         dummy_loader = get_data_augmenter(dataset[:1])
         input_shape = next(dummy_loader)[0].shape[-4:]
         dummy_loader._finish()
-    transforms += get_transforms()
+    transforms = get_transforms()
     # cross validation
     for i, (train, validation) in enumerate(k_fold.split(dataset, [x[0] for x in dataset]), start=1):
         checkpoint_dir = os.path.join(config["workspace"], "cross_validation", str(i))
@@ -63,11 +59,12 @@ def main(config, custom_model_generator=None):
         train = [dataset[i] for i in train]
         validation = [dataset[i] for i in validation]
         batch_size = _fit_batch_size(len(train), config_data["batch_size"])
-        train_augmenter = get_data_augmenter(train, batch_size,
-                                             transforms, config_data["loader_threads"])
+        train_augmenter = get_data_augmenter(train, batch_size, sample_size, transforms, config_data["loader_threads"])
         train_dl = get_tf_dataset(train_augmenter, input_shape)
         #   cache validation data
-        val_augmenter = get_data_augmenter(validation, len(validation))
+        np.random.seed(seed=42)
+        val_augmenter = get_data_augmenter(validation, len(validation), sample_size=sample_size)
+        np.random.seed()
         validation_data = val_augmenter.__next__()
         val_augmenter._finish()
         # initialize model
