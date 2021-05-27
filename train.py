@@ -98,6 +98,9 @@ def main(config, custom_model_generator=None):
                             epochs=config_training["epochs"],
                             validation_data=validation_data,
                             callbacks=[checkpoint_callback, early_stopping_callback, tensorboard_callback])
+        del model
+        del train_dl
+        del train_augmenter
         # save summary of fold
         fold_summary = {
             "auc": max(history.history["val_auc"]),
