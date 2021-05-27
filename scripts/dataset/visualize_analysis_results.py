@@ -8,8 +8,14 @@ import SimpleITK as sitk
 from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE, LABELS
 
 
+def _get_mean_of_histo(histogram):
+    if not isinstance(histogram, np.ndarray):
+        histogram = np.array(histogram)
+    return int(np.sum(histogram * np.arange(0, HOUNSFIELD_RANGE)))
+
+
 def crop_histogram(histogram, coverage):
-    mean = int(np.sum(histogram * np.arange(0, HOUNSFIELD_RANGE)))
+    mean = _get_mean_of_histo(histogram)
     cropped_histogram = np.array([histogram[mean]])
     offset_left = 0
     offset_right = 0
@@ -20,12 +26,15 @@ def crop_histogram(histogram, coverage):
     return cropped_histogram, mean - offset_left, len(histogram) - mean - offset_right
 
 
-def visualize_histograms(histograms, coverage):
+def visualize_histograms(histograms, coverage, ids):
     print(f"Histograms (coverage = {coverage}):")
+    means = [[_get_mean_of_histo(np.array(h) / sum(h)) for h in c] for c in histograms]
+    histograms = [np.array(h).sum(0) for h in histograms]
+    histograms = [h.astype(float) / h.sum() for h in histograms]
+
     rows = int(np.ceil(len(histograms) / 2))
     fig, axs = plt.subplots(rows, 2, constrained_layout=True)
     for i, (histogram, label) in enumerate(zip(histograms, LABELS)):
-        histogram = np.array(histogram)
         histogram, cutoff_left, cutoff_right = crop_histogram(histogram.astype(np.float) / np.sum(histogram), coverage)
         row = int(i / 2)
         col = i % 2
@@ -38,7 +47,21 @@ def visualize_histograms(histograms, coverage):
         axs[row][col].set_title(label)
         print(f"\t{label}: [{lower_boundary}, {upper_boundary}] ({upper_boundary - lower_boundary})")
     plt.show()
+
+    fig, axs = plt.subplots(rows, 2, constrained_layout=True)
+    fig.set_dpi(500)
+    ids = [str(i) for i in ids]
+    for i, (mean, label) in enumerate(zip(means, LABELS)):
+        row = int(i / 2)
+        col = i % 2
+        axs[row][col].bar(ids, mean)
+        axs[row][col].set_title(label)
+    plt.show()
+    for id_and_mean in [list(zip(ids, c)) for c in means]:
+        id_and_mean.sort(key=lambda x: x[1])
+        print(id_and_mean)
     print()
+
 
 
 def f_score(precision, recall, beta):
@@ -98,7 +121,13 @@ def main(file, hist_coverage, f_beta):
     with open(file, "r") as file:
         results = json.load(file)
 
-    visualize_histograms(results["histograms"], hist_coverage)
+    rois = results["rois"]
+    rois.sort(key=lambda x: x[0] * x[1] * x[2])
+    print(f"Minimal ROI: {rois[0]}")
+    print(f"Maximal ROI: {rois[-1]}")
+    print(f"Bounding box range: {results['bb_range']}\n")
+
+    visualize_histograms(results["histograms"], hist_coverage, results["ids"])
     visualize_bb_analysis(results["precisions"], results["precisions_std"], results["precisions_min"],
                           results["recalls"], results["recalls_std"],  results["recalls_min"],
                           results["bb_range"], results["coverage"], f_beta)

@@ -16,28 +16,29 @@ def histogram(data):
 
 def analyze(dataset, do_histograms=True, do_bounding_boxes=True):
     dataset = scan_data_directory(dataset, crop="all")
-    results = {}
     # collect data (histograms, bounding boxes)
-    histograms = [np.zeros(HOUNSFIELD_RANGE, dtype=np.int) for _ in range(len(LABELS))]
+    histograms = [[] for _ in range(len(LABELS))]
     rois = []
+    ids = []
     min_bb_size = np.array([np.inf, np.inf, np.inf])
     max_bb_size = np.array([-np.inf, -np.inf, -np.inf])
     for i, directory in enumerate(dataset):
+        ids.append(int(os.path.basename(directory)))
         segmentation_sitk = sitk.ReadImage(os.path.join(directory, "raw", "segmentation.seg.nrrd"))
         if do_histograms:
             data_sitk_list = [sitk.ReadImage(os.path.join(directory, "raw", f"{label}.nrrd")) for label in LABELS]
             data_np_list = [sitk.GetArrayFromImage(d_sitk) for d_sitk in data_sitk_list]
             for data_np, histo in zip(data_np_list, histograms):
-                histo += histogram(data_np)
+                histo.append(histogram(data_np).tolist())
         if do_bounding_boxes:
             min_bb_size = np.array([min(x, y) for x, y in zip(min_bb_size, segmentation_sitk.GetSize())])
             max_bb_size = np.array([max(x, y + 1) for x, y in zip(max_bb_size, segmentation_sitk.GetSize())])
             rois.append(np.array(segmentation_sitk.GetSize()))
         print(f"\rCollect data: {i + 1}/{len(dataset)}", end="")
     print()
-    for i, histo in enumerate(histograms):
-        histograms[i] = (histo.astype(np.float) / np.sum(histo)).tolist()
-    results["histograms"] = histograms
+    results = {"ids": ids,
+               "histograms": histograms,
+               "rois": [r.tolist() for r in rois]}
 
     if do_bounding_boxes:
         # calculate precision and recall for all meaningful bounding boxes
