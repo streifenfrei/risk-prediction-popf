@@ -54,6 +54,14 @@ def scan_data_directory(data_directory, crop="none", blacklist=None):
     return data
 
 
+def visualize_data(data: np.ndarray):
+    import matplotlib.pyplot as plt
+    data = data.squeeze()
+    for image in np.split(data, data.shape[-1], -1):
+        plt.imshow(image)
+        plt.show()
+
+
 class DataLoader(SlimDataLoaderBase, ABC):
     def __init__(self,
                  data,
@@ -79,8 +87,8 @@ class DataLoader(SlimDataLoaderBase, ABC):
 
     def _sample(self, data: sitk.Image, segmentation: sitk.Image):
         roi_size = segmentation.GetSize()
-        crop_size = [max(s_sz, roi_size) for s_sz, roi_sz in zip(self.sample_size, roi_size)]
-        crop = sitk.GetArrayFromImage(Crop(data, segmentation, crop_size).fixed())
+        crop_size = [max(s_sz, roi_sz) for s_sz, roi_sz in zip(self.sample_size, roi_size)]
+        crop = sitk.GetArrayFromImage(Crop(data, segmentation, crop_size).fixed()).transpose()
         crop = np.expand_dims(np.expand_dims(crop, 0), 0)
         return random_crop(crop, crop_size=self.sample_size)[0].squeeze(0)
 

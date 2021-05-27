@@ -57,6 +57,11 @@ def main(config, custom_model_generator=None):
         if os.path.exists(fold_summary_file):
             continue
         # initialize datasets
+        train = train.tolist()
+        validation = validation.tolist()
+        if config_data["sample"]:
+            train *= config_data["sample_count"]
+            validation *= config_data["sample_count"]
         train = [dataset[i] for i in train]
         validation = [dataset[i] for i in validation]
         batch_size = _fit_batch_size(len(train), config_data["batch_size"])
@@ -73,17 +78,12 @@ def main(config, custom_model_generator=None):
         model.compile(optimizer=config_training["optimizer"],
                       loss=tf.losses.BinaryCrossentropy(from_logits=True),
                       metrics=["AUC"])
-
-        early_stopping_callback = tf.keras.callbacks.EarlyStopping(monitor="val_auc",
-                                                                   patience=config_training["es_patience"]),
-        callbacks = [early_stopping_callback]
         checkpoint_file = os.path.join(checkpoint_dir, "{epoch:04d}.ckpt")
         checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_file,
                                                                  monitor="val_auc",
                                                                  save_weights_only=True,
                                                                  save_best_only=True)
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, write_graph=False)
-        callbacks += [checkpoint_callback, tensorboard_callback]
         latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
         initial_epoch = 0
         if latest_checkpoint is not None:
@@ -95,28 +95,31 @@ def main(config, custom_model_generator=None):
                             initial_epoch=initial_epoch,
                             epochs=config_training["epochs"],
                             validation_data=validation_data,
-                            callbacks=[checkpoint_callback, early_stopping_callback, tensorboard_callback])
+                            callbacks=[checkpoint_callback, tensorboard_callback])
         del model
         del train_dl
         del train_augmenter
         # save summary of fold
         fold_summary = {
-            "auc": max(history.history["val_auc"]),
-            "epochs": early_stopping_callback[0].stopped_epoch
+            "auc": list(history.history["val_auc"]),
         }
         with open(fold_summary_file, "w") as file:
             json.dump(fold_summary, file, indent=4)
 
     # save summary of cross validation
-    cv_summary = {"auc_mean": 0, "epochs_mean": 0}
+    aucs = []
     for i in range(1, config_training["folds"] + 1):
         fold_summary_file = os.path.join(config["workspace"], "cross_validation", str(i), "logs", "summary.json")
         with open(fold_summary_file, "r") as file:
             fold_summary = json.load(file)
-            cv_summary["auc_mean"] += fold_summary["auc"]
-            cv_summary["epochs_mean"] += fold_summary["epochs"]
-    cv_summary["auc_mean"] /= config_training["folds"]
-    cv_summary["epochs_mean"] /= config_training["folds"]
+            aucs.append(fold_summary["auc"])
+    aucs = [sum(i) / len(i) for i in zip(*aucs)]
+    best_auc = max(aucs)
+    epoch = aucs.index(best_auc)
+    cv_summary = {
+        "auc": best_auc,
+        "epoch": epoch
+    }
     cv_summary_file = os.path.join(config["workspace"], "summary.json")
     with open(cv_summary_file, "w") as file:
         json.dump(cv_summary, file)
