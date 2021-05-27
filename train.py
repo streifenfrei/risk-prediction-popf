@@ -3,6 +3,7 @@ import os
 from argparse import ArgumentParser
 
 import tensorflow as tf
+import numpy as np
 import yaml
 from batchgenerators.transforms import RandomShiftTransform, MirrorTransform
 from sklearn.model_selection import StratifiedKFold
@@ -37,7 +38,8 @@ def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
     config_training = config["training"]
     config_data = config["data"]
-    dataset = scan_data_directory(config_data["path"], crop=config_data["crop"])
+    blacklist = config_data["blacklist"] if "blacklist" in config_data else None
+    dataset = scan_data_directory(config_data["path"], crop=config_data["crop"], blacklist=blacklist)
     k_fold = StratifiedKFold(n_splits=config_training["folds"], shuffle=False)
     sample_size = config_data["sample_size"] if config_data["sample"] else None
     if config_data["sample"]:

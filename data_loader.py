@@ -13,8 +13,10 @@ from batchgenerators.transforms import AbstractTransform, Compose
 from scripts.dataset.preprocess_dataset import Crop
 
 
-def scan_data_directory(data_directory, crop="none"):
+def scan_data_directory(data_directory, crop="none", blacklist=None):
     assert crop in ["none", "fixed", "roi", "seg", "all"]
+    if blacklist is None:
+        blacklist = []
     labels = {}
     with open(os.path.join(data_directory, "labels.csv"), "r") as file:
         reader = csv.reader(file)
@@ -29,6 +31,8 @@ def scan_data_directory(data_directory, crop="none"):
                 continue
             if patient_id not in labels:
                 print(f"No label found for patient {patient_id}")
+                continue
+            if patient_id in blacklist:
                 continue
             label = labels[patient_id]
 
