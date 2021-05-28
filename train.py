@@ -38,10 +38,16 @@ def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
     config_training = config["training"]
     config_data = config["data"]
+    sample_size = config_data["sample_size"] if config_data["sample"] else None
+    sample_count = config_data["sample_count"] if config_data["sample"] else 1
+    if config_data["sample"]:
+        if config_data["crop"] in ["full", "fixed", "roi"]:
+            config_data["crop"] = "roi_only"
+        elif config_data["crop"] == "seg":
+            config_data["crop"] = "roi_only_masked"
     blacklist = config_data["blacklist"] if "blacklist" in config_data else None
     dataset = scan_data_directory(config_data["path"], crop=config_data["crop"], blacklist=blacklist)
     k_fold = StratifiedKFold(n_splits=config_training["folds"], shuffle=False)
-    sample_size = config_data["sample_size"] if config_data["sample"] else None
     if config_data["sample"]:
         input_shape = [*sample_size, 1]
     else:
@@ -59,17 +65,16 @@ def main(config, custom_model_generator=None):
         # initialize datasets
         train = train.tolist()
         validation = validation.tolist()
-        if config_data["sample"]:
-            train *= config_data["sample_count"]
-            validation *= config_data["sample_count"]
         train = [dataset[i] for i in train]
         validation = [dataset[i] for i in validation]
-        batch_size = _fit_batch_size(len(train), config_data["batch_size"])
-        train_augmenter = get_data_augmenter(train, batch_size, sample_size, transforms, config_data["loader_threads"])
+        batch_size = _fit_batch_size(len(train) * sample_count, config_data["batch_size"])
+        train_augmenter = get_data_augmenter(train, batch_size, sample_size, sample_count,
+                                             transforms, config_data["loader_threads"])
         train_dl = get_tf_dataset(train_augmenter, input_shape)
         #   cache validation data
         np.random.seed(seed=42)
-        val_augmenter = get_data_augmenter(validation, len(validation), sample_size=sample_size)
+        val_augmenter = get_data_augmenter(validation, len(validation) * sample_count,
+                                           sample_size=sample_size, sample_count=sample_count)
         np.random.seed()
         validation_data = val_augmenter.__next__()
         val_augmenter._finish()

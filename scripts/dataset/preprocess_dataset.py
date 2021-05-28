@@ -23,12 +23,16 @@ INTERPOLATION_MAPPING = {
 }
 
 
-def data_iterator(data_directory):
+def data_iterator(data_directory, blacklist=None):
+    if blacklist is None:
+        blacklist = []
     pattern = PATIENT_ID_PATTERN.format(id="([0-9]{4})")
     for root, _, files in os.walk(data_directory):
         match = re.search(pattern, os.path.basename(root))
         if match:
             patient_id = int(match.group(1))
+            if patient_id in blacklist:
+                continue
         else:
             continue
         data_file = os.path.join(root, DATA_FILE_PATTERN.format(id=patient_id))
@@ -168,7 +172,8 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
     labels_file = config["labels"]
 
     dataset = []
-    for patient_id, data_file, segmentation_file in data_iterator(data):
+    blacklist = config["blacklist"] if "blacklist" in config else []
+    for patient_id, data_file, segmentation_file in data_iterator(data, blacklist=blacklist):
         dataset.append((patient_id, data_file, segmentation_file))
 
     # Resample (and calculate bounding box if required)
@@ -205,7 +210,9 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
         data_sitk = sitk.ReadImage(os.path.join(output_directory, "full.nrrd"))
         if do_crop:
             segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
+            # crops
             crop = Crop(data_sitk, segmentation_sitk, bb_size)
+            crop_roi_only = Crop(data_sitk, segmentation_sitk, segmentation_sitk.GetSize())
             # fixed bb crop
             if "fixed" in crops:
                 data_sitk = crop.fixed()
@@ -214,10 +221,14 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             if "roi" in crops:
                 data_sitk = crop.roi()
                 sitk.WriteImage(data_sitk, os.path.join(output_directory, "roi.nrrd"))
+                roi_only = crop_roi_only.fixed()
+                sitk.WriteImage(roi_only, os.path.join(output_directory, "roi_only.nrrd"))
             # segmentation crop
             if "seg" in crops:
                 data_sitk = crop.seg()
                 sitk.WriteImage(crop.seg(), os.path.join(output_directory, "seg.nrrd"))
+                roi_only_masked = crop_roi_only.seg()
+                sitk.WriteImage(roi_only_masked, os.path.join(output_directory, "roi_only_masked.nrrd"))
             print(f"\rCropping: {i + 1}/{len(dataset)}", end="")
         for crop in crops:
             if intensity_ranges[crop][1]:
@@ -232,6 +243,14 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
                 input_path = os.path.join(raw_directory, f"{crop}.nrrd")
                 sitk.WriteImage(normalize(sitk.ReadImage(input_path), intensity_ranges[crop][0], normalization_range),
                                 os.path.join(output_directory, f"{crop}.nrrd"))
+            if "roi" in crops:
+                roi_only = sitk.ReadImage(os.path.join(raw_directory, "roi_only.nrrd"))
+                sitk.WriteImage(normalize(roi_only, intensity_ranges["roi"][0], normalization_range),
+                                os.path.join(output_directory, "roi_only.nrrd"))
+            if "seg" in crops:
+                roi_only_masked = sitk.ReadImage(os.path.join(raw_directory, "roi_only_masked.nrrd"))
+                sitk.WriteImage(normalize(roi_only_masked, intensity_ranges["seg"][0], normalization_range),
+                                os.path.join(output_directory, "roi_only_masked.nrrd"))
             print(f"\rNormalizing: {i + 1}/{len(dataset)}", end="")
 
     if os.path.exists(labels_file):
