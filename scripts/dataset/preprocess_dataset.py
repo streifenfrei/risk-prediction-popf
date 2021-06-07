@@ -58,6 +58,18 @@ def clip_intensities(data):
     return _np_to_sitk(data_np, data)
 
 
+def get_segmentation_roi(segmentation):
+    segmentation_np = sitk.GetArrayFromImage(segmentation).transpose()
+    x = np.any(segmentation_np, axis=(1, 2))
+    x_min, x_max = np.where(x)[0][[0, -1]]
+    y = np.any(segmentation_np, axis=(0, 2))
+    y_min, y_max = np.where(y)[0][[0, -1]]
+    z = np.any(segmentation_np, axis=(0, 1))
+    z_min, z_max = np.where(z)[0][[0, -1]]
+    segmentation = segmentation[x_min:x_max, y_min:y_max, z_min:z_max]
+    return segmentation
+
+
 def resample(data, segmentation, new_size, new_spacing, interpolator):
     center = data.TransformContinuousIndexToPhysicalPoint([sz / 2.0 for sz in data.GetSize()])
     new_origin = [c - c_index * n_spc for c, c_index, n_spc in zip(center, [sz / 2.0 for sz in new_size], new_spacing)]
@@ -66,6 +78,7 @@ def resample(data, segmentation, new_size, new_spacing, interpolator):
                          outputSpacing=new_spacing,
                          interpolator=interpolator,
                          defaultPixelValue=HOUNSFIELD_BOUNDARIES[0])
+    segmentation = get_segmentation_roi(segmentation)
     new_size = [int(o_sz * o_spc / n_spc) for o_sz, o_spc, n_spc in
                 zip(segmentation.GetSize(), segmentation.GetSpacing(), new_spacing)]
     segmentation = sitk.Resample(segmentation, size=new_size,
@@ -115,7 +128,8 @@ class Crop:
     def seg(self):
         data_np = sitk.GetArrayFromImage(self.data).transpose()
         segmentation_np = sitk.GetArrayFromImage(self.segmentation).transpose()
-        segmentation_np = segmentation_np.sum(axis=0).astype(bool)
+        #segmentation_np = segmentation_np.sum(axis=0)
+        segmentation_np = segmentation_np.astype(bool)
         inner_offset = [max(-off, 0) for off in self.offset]
         data_size = self.data.GetSize()
         segmentation_np = segmentation_np[inner_offset[0]:inner_offset[0] + data_size[0],
@@ -180,6 +194,7 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
     invalid_data = []
     for i, entry in enumerate(dataset):
         patient_id, data_file, segmentation_file = entry
+        output_directory = os.path.join(out, str(patient_id), "raw")
         try:
             data_sitk = sitk.ReadImage(data_file, imageIO="NrrdImageIO")
             segmentation_sitk = sitk.ReadImage(segmentation_file, imageIO="NrrdImageIO")
@@ -189,13 +204,13 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
         if do_resample:
             data_sitk, segmentation_sitk = resample(data_sitk, segmentation_sitk, target_size, target_spacing, interpolator)
             data_sitk = clip_intensities(data_sitk)
-            output_directory = os.path.join(out, str(patient_id), "raw")
             if not os.path.exists(output_directory):
                 os.makedirs(output_directory)
                 sitk.WriteImage(data_sitk, os.path.join(output_directory, "full.nrrd"))
                 sitk.WriteImage(segmentation_sitk, os.path.join(output_directory, "segmentation.seg.nrrd"))
             print(f"\rResampling: {i + 1}/{len(dataset)}", end="")
         if calculate_bb:
+            segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
             bb_size = [max(x, y) for x, y in zip(bb_size, segmentation_sitk.GetSize())]
     for entry in invalid_data:
         dataset.remove(entry)
