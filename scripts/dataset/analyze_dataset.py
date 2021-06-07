@@ -7,17 +7,22 @@ import SimpleITK as sitk
 import numpy as np
 
 from data_loader import scan_data_directory
-from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE, LABELS
+from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, LABELS
 
 
 def histogram(data):
     return np.histogram(data, bins=np.arange(HOUNSFIELD_BOUNDARIES[0], HOUNSFIELD_BOUNDARIES[1] + 1))[0]
 
 
-def analyze(dataset, do_histograms=True, do_bounding_boxes=True):
+def analyze(dataset, do_histograms=True, do_bounding_boxes=True, labels=None):
+    if labels is None:
+        labels = LABELS
+    labels = set(labels)
+    labels.add("full")
+    assert len(labels - set(LABELS)) == 0, f"invalid labels argument: {labels}"
     dataset = scan_data_directory(dataset, crop="all")
     # collect data (histograms, bounding boxes)
-    histograms = [[] for _ in range(len(LABELS))]
+    histograms = [[] for _ in range(len(labels))]
     rois = []
     ids = []
     min_bb_size = np.array([np.inf, np.inf, np.inf])
@@ -26,7 +31,7 @@ def analyze(dataset, do_histograms=True, do_bounding_boxes=True):
         ids.append(int(os.path.basename(directory)))
         segmentation_sitk = sitk.ReadImage(os.path.join(directory, "raw", "segmentation.seg.nrrd"))
         if do_histograms:
-            data_sitk_list = [sitk.ReadImage(os.path.join(directory, "raw", f"{label}.nrrd")) for label in LABELS]
+            data_sitk_list = [sitk.ReadImage(os.path.join(directory, "raw", f"{label}.nrrd")) for label in labels]
             data_np_list = [sitk.GetArrayFromImage(d_sitk) for d_sitk in data_sitk_list]
             for data_np, histo in zip(data_np_list, histograms):
                 histo.append(histogram(data_np).tolist())
@@ -70,6 +75,7 @@ def analyze(dataset, do_histograms=True, do_bounding_boxes=True):
                   f"{i + 1}/{len(search_space)} ({int(np.ceil(100 * i / len(search_space)))}%)", end="")
         results = {**results,
                    "histograms": histograms,
+                   "labels": list(labels),
                    "bb_range": (tuple(min_bb_size.tolist()), tuple(max_bb_size.tolist())),
                    "precisions": precisions.tolist(),
                    "precisions_std": precisions_std.tolist(),

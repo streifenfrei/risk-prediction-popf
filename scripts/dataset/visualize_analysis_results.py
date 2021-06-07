@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
-from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE, LABELS
+from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE
 
 
 def _get_mean_of_histo(histogram):
@@ -26,7 +26,7 @@ def crop_histogram(histogram, coverage):
     return cropped_histogram, mean - offset_left, len(histogram) - mean - offset_right
 
 
-def visualize_histograms(histograms, coverage, ids):
+def visualize_histograms(histograms, coverage, ids, labels):
     print(f"Histograms (coverage = {coverage}):")
     means = [[_get_mean_of_histo(np.array(h) / sum(h)) for h in c] for c in histograms]
     histograms = [np.array(h).sum(0) for h in histograms]
@@ -38,24 +38,26 @@ def visualize_histograms(histograms, coverage, ids):
         histogram, cutoff_left, cutoff_right = crop_histogram(histogram.astype(np.float) / np.sum(histogram), coverage)
         row = int(i / 2)
         col = i % 2
+        axis = axs[row][col] if row > 1 else axs[col]
         lower_boundary = HOUNSFIELD_BOUNDARIES[0] + cutoff_left
         upper_boundary = HOUNSFIELD_BOUNDARIES[1] - cutoff_right
-        axs[row][col].fill_between(np.arange(lower_boundary, upper_boundary), histogram)
-        axs[row][col].plot(np.arange(lower_boundary, upper_boundary), histogram)
-        axs[row][col].set_xticks([lower_boundary, 0, upper_boundary])
-        axs[row][col].set_ylim([0., None])
-        axs[row][col].set_title(label)
+        axis.fill_between(np.arange(lower_boundary, upper_boundary), histogram)
+        axis.plot(np.arange(lower_boundary, upper_boundary), histogram)
+        axis.set_xticks([lower_boundary, 0, upper_boundary])
+        axis.set_ylim([0., None])
+        axis.set_title(label)
         print(f"\t{label}: [{lower_boundary}, {upper_boundary}] ({upper_boundary - lower_boundary})")
     plt.show()
 
     fig, axs = plt.subplots(rows, 2, constrained_layout=True)
     fig.set_dpi(500)
     ids = [str(i) for i in ids]
-    for i, (mean, label) in enumerate(zip(means, LABELS)):
+    for i, (mean, label) in enumerate(zip(means, labels)):
         row = int(i / 2)
         col = i % 2
-        axs[row][col].bar(ids, mean)
-        axs[row][col].set_title(label)
+        axis = axs[row][col] if row > 1 else axs[col]
+        axis.bar(ids, mean)
+        axis.set_title(label)
     plt.show()
     for id_and_mean in [list(zip(ids, c)) for c in means]:
         id_and_mean.sort(key=lambda x: x[1])
@@ -127,7 +129,7 @@ def main(file, hist_coverage, f_beta):
     print(f"Maximal ROI: {rois[-1]}")
     print(f"Bounding box range: {results['bb_range']}\n")
 
-    visualize_histograms(results["histograms"], hist_coverage, results["ids"])
+    visualize_histograms(results["histograms"], hist_coverage, results["ids"], results["labels"])
     visualize_bb_analysis(results["precisions"], results["precisions_std"], results["precisions_min"],
                           results["recalls"], results["recalls_std"],  results["recalls_min"],
                           results["bb_range"], results["coverage"], f_beta)
