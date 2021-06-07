@@ -51,6 +51,22 @@ def visualize_data(data: np.ndarray):
         plt.show()
 
 
+class RNGContext:
+    def __init__(self, seed):
+        self.seed = seed
+        self.rng_state = None
+
+    def __enter__(self):
+        if self.seed is not None:
+            self.rng_state = np.random.get_state()
+            np.random.seed(seed=self.seed)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.seed is not None:
+            np.random.set_state(self.rng_state)
+
+
 class DataLoader(SlimDataLoaderBase, ABC):
     def __init__(self,
                  data,
@@ -58,7 +74,8 @@ class DataLoader(SlimDataLoaderBase, ABC):
                  sample_size=None,
                  sample_count=1,
                  number_of_threads_in_multithreaded=4,
-                 epochs=1):
+                 epochs=1,
+                 seed=None):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
         self._data = data
         self.sample_size = sample_size
@@ -68,6 +85,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
         self.was_initialized = False
         self.epochs = epochs
         self._current_epoch = 0
+        self.seed = seed
 
     def initialize(self):
         self._current_epoch = 0
@@ -95,7 +113,8 @@ class DataLoader(SlimDataLoaderBase, ABC):
                 data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
                 if self.sample_size is not None:
                     data_np = np.expand_dims(data_np, 0)
-                    data_np = random_crop(data_np, crop_size=self.sample_size)[0].squeeze(0)
+                    with RNGContext(self.seed):
+                        data_np = random_crop(data_np, crop_size=self.sample_size)[0].squeeze(0)
                 data_batch.append(data_np)
                 label_batch.append(label)
         batch = {"data": np.stack(data_batch),
@@ -104,11 +123,11 @@ class DataLoader(SlimDataLoaderBase, ABC):
         return batch
 
 
-def get_data_augmenter(data, batch_size=1, sample_size=None, sample_count=1, transforms=None, threads=1):
+def get_data_augmenter(data, batch_size=1, sample_size=None, sample_count=1, transforms=None, threads=1, seed=None):
     transforms = [] if transforms is None else transforms
     threads = min(int(np.ceil(len(data) / batch_size)), threads)
     loader = DataLoader(data=data, batch_size=batch_size, sample_size=sample_size,
-                        sample_count=sample_count, number_of_threads_in_multithreaded=threads)
+                        sample_count=sample_count, number_of_threads_in_multithreaded=threads, seed=seed)
     transforms = transforms + [PrepareForTF()]
     return MultiThreadedAugmenter(loader, Compose(transforms), threads)
 
