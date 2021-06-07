@@ -3,7 +3,6 @@ import os
 from argparse import ArgumentParser
 
 import tensorflow as tf
-import numpy as np
 import yaml
 from batchgenerators.transforms import RandomShiftTransform, MirrorTransform
 from sklearn.model_selection import StratifiedKFold
@@ -72,11 +71,9 @@ def main(config, custom_model_generator=None):
                                              transforms, config_data["loader_threads"])
         train_dl = get_tf_dataset(train_augmenter, input_shape)
         #   cache validation data
-        np.random.seed(seed=42)
-        val_augmenter = get_data_augmenter(validation, len(validation) * sample_count,
+        val_augmenter = get_data_augmenter(validation, len(validation) * sample_count, seed=42,
                                            sample_size=sample_size, sample_count=sample_count)
-        np.random.seed()
-        validation_data = val_augmenter.__next__()
+        val_dl = val_augmenter.__next__()
         val_augmenter._finish()
         # initialize model
         model = load_model(config["model"], input_shape)
@@ -86,8 +83,7 @@ def main(config, custom_model_generator=None):
         checkpoint_file = os.path.join(checkpoint_dir, "{epoch:04d}.ckpt")
         checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_file,
                                                                  monitor="val_auc",
-                                                                 save_weights_only=True,
-                                                                 save_best_only=True)
+                                                                 save_weights_only=True)
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, write_graph=False)
         latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
         initial_epoch = 0
@@ -99,9 +95,8 @@ def main(config, custom_model_generator=None):
         history = model.fit(x=train_dl,
                             initial_epoch=initial_epoch,
                             epochs=config_training["epochs"],
-                            validation_data=validation_data,
+                            validation_data=val_dl,
                             callbacks=[checkpoint_callback, tensorboard_callback])
-        del model
         del train_dl
         del train_augmenter
         # save summary of fold
