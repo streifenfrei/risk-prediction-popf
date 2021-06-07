@@ -6,6 +6,7 @@ import SimpleITK as sitk
 import numpy as np
 import tensorflow as tf
 from batchgenerators.augmentations.crop_and_pad_augmentations import random_crop
+from batchgenerators.augmentations.spatial_transformations import augment_resize
 
 from batchgenerators.dataloading import SlimDataLoaderBase, MultiThreadedAugmenter
 from batchgenerators.transforms import AbstractTransform, Compose
@@ -73,12 +74,14 @@ class DataLoader(SlimDataLoaderBase, ABC):
                  batch_size,
                  sample_size=None,
                  sample_count=1,
+                 resize_to_sample_size=False,
                  number_of_threads_in_multithreaded=4,
                  epochs=1,
                  seed=None):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
         self._data = data
         self.sample_size = sample_size
+        self.resize_to_sample_size = resize_to_sample_size
         if self.sample_size is not None:
             self._data *= sample_count
         self._current_position = 0
@@ -113,8 +116,11 @@ class DataLoader(SlimDataLoaderBase, ABC):
                 data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
                 if self.sample_size is not None:
                     data_np = np.expand_dims(data_np, 0)
-                    with RNGContext(self.seed):
-                        data_np = random_crop(data_np, crop_size=self.sample_size)[0].squeeze(0)
+                    if self.resize_to_sample_size:
+                        data_np = augment_resize(data_np, None, self.sample_size)[0].squeeze(0)
+                    else:
+                        with RNGContext(self.seed):
+                            data_np = random_crop(data_np, crop_size=self.sample_size)[0].squeeze(0)
                 data_batch.append(data_np)
                 label_batch.append(label)
         batch = {"data": np.stack(data_batch),

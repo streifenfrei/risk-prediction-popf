@@ -38,7 +38,8 @@ def main(config, custom_model_generator=None):
     config_training = config["training"]
     config_data = config["data"]
     sample_size = config_data["sample_size"] if config_data["sample"] else None
-    sample_count = config_data["sample_count"] if config_data["sample"] else 1
+    sample_count = config_data["sample_count"] \
+        if config_data["sample"] and not config_data["resize_to_sample_size"] else 1
     if config_data["sample"]:
         if config_data["crop"] in ["full", "fixed", "roi"]:
             config_data["crop"] = "roi_only"
