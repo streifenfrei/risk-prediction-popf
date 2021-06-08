@@ -38,8 +38,8 @@ def main(config, custom_model_generator=None):
     config_training = config["training"]
     config_data = config["data"]
     sample_size = config_data["sample_size"] if config_data["sample"] else None
-    sample_count = config_data["sample_count"] \
-        if config_data["sample"] and not config_data["resize_to_sample_size"] else 1
+    resize_to_sample_size = config_data["resize_to_sample_size"]
+    sample_count = config_data["sample_count"] if config_data["sample"] and not resize_to_sample_size else 1
     if config_data["sample"]:
         if config_data["crop"] in ["full", "fixed", "roi"]:
             config_data["crop"] = "roi_only"
@@ -68,12 +68,21 @@ def main(config, custom_model_generator=None):
         train = [dataset[i] for i in train]
         validation = [dataset[i] for i in validation]
         batch_size = _fit_batch_size(len(train) * sample_count, config_data["batch_size"])
-        train_augmenter = get_data_augmenter(train, batch_size, sample_size, sample_count,
-                                             transforms, config_data["loader_threads"])
+        train_augmenter = get_data_augmenter(data=train,
+                                             batch_size=batch_size,
+                                             sample_size=sample_size,
+                                             sample_count=sample_count,
+                                             resize_to_sample_size=resize_to_sample_size,
+                                             transforms=transforms,
+                                             threads=config_data["loader_threads"])
         train_dl = get_tf_dataset(train_augmenter, input_shape)
         #   cache validation data
-        val_augmenter = get_data_augmenter(validation, len(validation) * sample_count, seed=42,
-                                           sample_size=sample_size, sample_count=sample_count)
+        val_augmenter = get_data_augmenter(data=validation,
+                                           batch_size=len(validation) * sample_count,
+                                           sample_size=sample_size,
+                                           sample_count=sample_count,
+                                           resize_to_sample_size=resize_to_sample_size,
+                                           seed=42)
         val_dl = val_augmenter.__next__()
         val_augmenter._finish()
         # initialize model

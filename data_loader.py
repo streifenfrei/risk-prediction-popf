@@ -48,6 +48,7 @@ def visualize_data(data: np.ndarray):
     import matplotlib.pyplot as plt
     data = data.squeeze()
     for image in np.split(data, data.shape[-1], -1):
+        image = np.moveaxis(image, 0, 1)
         plt.imshow(image)
         plt.show()
 
@@ -115,10 +116,11 @@ class DataLoader(SlimDataLoaderBase, ABC):
                 data_sitk = sitk.ReadImage(data_file)
                 data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
                 if self.sample_size is not None:
-                    data_np = np.expand_dims(data_np, 0)
                     if self.resize_to_sample_size:
                         data_np = augment_resize(data_np, None, self.sample_size)[0].squeeze(0)
+                        data_np = np.expand_dims(data_np, 0)
                     else:
+                        data_np = np.expand_dims(data_np, 0)
                         with RNGContext(self.seed):
                             data_np = random_crop(data_np, crop_size=self.sample_size)[0].squeeze(0)
                 data_batch.append(data_np)
@@ -129,11 +131,13 @@ class DataLoader(SlimDataLoaderBase, ABC):
         return batch
 
 
-def get_data_augmenter(data, batch_size=1, sample_size=None, sample_count=1, transforms=None, threads=1, seed=None):
+def get_data_augmenter(data, batch_size=1, sample_size=None, sample_count=1,
+                       resize_to_sample_size=False, transforms=None, threads=1, seed=None):
     transforms = [] if transforms is None else transforms
     threads = min(int(np.ceil(len(data) / batch_size)), threads)
     loader = DataLoader(data=data, batch_size=batch_size, sample_size=sample_size,
-                        sample_count=sample_count, number_of_threads_in_multithreaded=threads, seed=seed)
+                        sample_count=sample_count, resize_to_sample_size=resize_to_sample_size,
+                        number_of_threads_in_multithreaded=threads, seed=seed)
     transforms = transforms + [PrepareForTF()]
     return MultiThreadedAugmenter(loader, Compose(transforms), threads)
 
