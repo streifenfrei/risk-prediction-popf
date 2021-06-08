@@ -9,7 +9,7 @@ from batchgenerators.augmentations.crop_and_pad_augmentations import random_crop
 from batchgenerators.augmentations.spatial_transformations import augment_resize
 
 from batchgenerators.dataloading import SlimDataLoaderBase, MultiThreadedAugmenter
-from batchgenerators.transforms import AbstractTransform, Compose
+from batchgenerators.transforms import AbstractTransform, Compose, MirrorTransform, RandomShiftTransform
 
 
 def scan_data_directory(data_directory, crop="none", blacklist=None):
@@ -42,6 +42,19 @@ def scan_data_directory(data_directory, crop="none", blacklist=None):
             else:
                 data.append(directory.path)
     return data
+
+
+def get_dataset_from_config(config):
+    if "data" in config:
+        config = config["data"]
+    dataset = scan_data_directory(config["path"], crop=config["crop"], blacklist=config["blacklist"])
+    if config["sample"]:
+        input_shape = [*config["sample_size"], 1]
+    else:
+        dummy_loader = get_data_augmenter(dataset[:1])
+        input_shape = next(dummy_loader)[0].shape[-4:]
+        dummy_loader._finish()
+    return dataset, input_shape
 
 
 def visualize_data(data: np.ndarray):
@@ -156,10 +169,44 @@ def get_tf_dataset(augmenter, input_shape):
         tf.TensorSpec(shape=batch_size, dtype=tf.int32)))
     return tf_dataset
 
-
 class PrepareForTF(AbstractTransform, ABC):
     def __call__(self, **data_dict):
         data = data_dict["data"]
         data = np.moveaxis(data, 1, -1)
         label = data_dict["label"]
         return tf.convert_to_tensor(data, dtype=tf.float32), tf.convert_to_tensor(label, dtype=tf.int32)
+
+
+def get_transforms():
+    return [MirrorTransform(),
+            RandomShiftTransform(shift_mu=0, shift_sigma=3, p_per_channel=1)]
+
+
+def _fit_batch_size(data_count, max_batch_size):
+    for i in range(max_batch_size, 0, -1):
+        if data_count % i == 0:
+            return i
+
+
+def get_data_loader_from_config(train_data, validation_data, config, input_shape):
+    if "data" in config:
+        config = config["data"]
+    batch_size = _fit_batch_size(len(train_data) * config["sample_count"], config["batch_size"])
+    train_augmenter = get_data_augmenter(data=train_data,
+                                         batch_size=batch_size,
+                                         sample_size=config["sample_size"],
+                                         sample_count=config["sample_count"],
+                                         resize_to_sample_size=config["resize_to_sample_size"],
+                                         transforms=get_transforms(),
+                                         threads=config["loader_threads"])
+    train_dl = get_tf_dataset(train_augmenter, input_shape)
+    #   cache validation data
+    val_augmenter = get_data_augmenter(data=validation_data,
+                                       batch_size=len(validation_data) * config["sample_count"],
+                                       sample_size=config["sample_size"],
+                                       sample_count=config["sample_count"],
+                                       resize_to_sample_size=config["resize_to_sample_size"],
+                                       seed=42)
+    val_dl = val_augmenter.__next__()
+    val_augmenter._finish()
+    return train_dl, val_dl

@@ -186,7 +186,7 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             else [config["normalization"][f"ir_{crop}"], False]
     normalization_range = config["normalization"]["target_range"]
     labels_file = config["labels"]
-    roi_margin = config["roi_margin"]
+    roi_margin = config["cropping"]["roi_margin"]
 
     dataset = []
     blacklist = config["blacklist"] if "blacklist" in config else []
