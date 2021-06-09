@@ -127,4 +127,8 @@ if __name__ == '__main__':
     args = arg_parser.parse_args()
     with open(args.config, "r") as config_file:
         config_dict = yaml.load(config_file, Loader=yaml.FullLoader)
-    main(config_dict)
+    try:
+        main(config_dict)
+    finally:
+        if "shutdown_system" in config_dict and config_dict["shutdown_system"]:
+            os.system("shutdown now")
