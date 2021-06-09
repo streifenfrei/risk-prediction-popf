@@ -6,12 +6,13 @@ import tensorflow as tf
 import yaml
 from sklearn.model_selection import StratifiedKFold
 
-from models import simple_net, squeeze_net
+from models import simple_net, squeeze_net, lombardo
 from data_loader import get_dataset_from_config, get_data_loader_from_config
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_mapping = {
     "simplenet": simple_net.get_model,
+    "lombardo": lombardo.get_model,
     "squeezenet": squeeze_net.get_model,
     "custom": None,
 }
@@ -60,7 +61,8 @@ def main(config, custom_model_generator=None):
         checkpoint_file = os.path.join(checkpoint_dir, "{epoch:04d}.ckpt")
         checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_file,
                                                                  monitor="val_auc",
-                                                                 save_weights_only=True)
+                                                                 save_weights_only=True,
+                                                                 save_best_only=True)
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, write_graph=False)
         latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
         initial_epoch = 0
@@ -76,25 +78,44 @@ def main(config, custom_model_generator=None):
                             callbacks=[checkpoint_callback, tensorboard_callback])
         # save summary of fold
         fold_summary = {
-            "auc": list(history.history["val_auc"]),
+            "loss": list(history.history["loss"]),
+            "val_loss": list(history.history["val_loss"]),
+            "auc": list(history.history["auc"]),
+            "val_auc": list(history.history["val_auc"]),
         }
         with open(fold_summary_file, "w") as file:
             json.dump(fold_summary, file, indent=4)
 
     # save summary of cross validation
-    aucs = []
+    metrics = {
+        "loss": [],
+        "val_loss": [],
+        "auc": [],
+        "val_auc": []
+    }
+    sizes = [0 for _ in range(config_training["epochs"])]
     for i in range(1, config_training["folds"] + 1):
         fold_summary_file = os.path.join(config["workspace"], "cross_validation", str(i), "logs", "summary.json")
         with open(fold_summary_file, "r") as file:
             fold_summary = json.load(file)
-            aucs.append(fold_summary["auc"])
-    aucs = [sum(i) / len(i) for i in zip(*aucs)]
-    best_auc = max(aucs)
-    epoch = aucs.index(best_auc)
-    cv_summary = {
-        "auc": best_auc,
-        "epoch": epoch
-    }
+            missing = config_training["epochs"] - len(fold_summary["auc"])
+            for i in range(config_training["epochs"]):
+                sizes[i] += 1 if i >= missing else 0
+            for _ in range(missing):
+                for m in metrics:
+                    fold_summary[m].insert(0, 0)
+            for m in metrics:
+                metrics[m].append(fold_summary[m])
+    for m in metrics:
+        metrics[m] = [sum(i) / s for i, s in zip(zip(*metrics[m]), sizes)]
+    with tf.summary.create_file_writer(config["workspace"]).as_default():
+        for m in metrics:
+            for i, d in enumerate(metrics[m]):
+                tf.summary.scalar(f"avg_{m}", d, step=i)
+    cv_summary = {}
+    for m in metrics:
+        cv_summary[m] = max(metrics[m])
+    cv_summary["val_loss_epoch"] = metrics["val_loss"].index(max(metrics["val_loss"]))
     cv_summary_file = os.path.join(config["workspace"], "summary.json")
     with open(cv_summary_file, "w") as file:
         json.dump(cv_summary, file)
