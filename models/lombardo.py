@@ -5,17 +5,17 @@ from tensorflow.keras import layers
 
 
 def get_model(input_shape=(None, None, None, 1), first_conv_channel=32, dropout=0.3):
-    model = keras.Sequential(name="Lombardo et al.")
+    model = keras.Sequential(name="Lombardo")
 
-    model.add(layers.Conv3D(filters=first_conv_channel, kernel_size=5, input_shape=input_shape))
+    model.add(layers.Conv3D(filters=first_conv_channel, kernel_size=5, input_shape=input_shape, padding="same"))
     model.add(layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25)))
     model.add(layers.MaxPooling3D(pool_size=4, strides=4))
 
-    model.add(layers.Conv3D(filters=2*first_conv_channel, kernel_size=3))
+    model.add(layers.Conv3D(filters=2*first_conv_channel, kernel_size=3, padding="same"))
     model.add(layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25)))
     model.add(layers.MaxPooling3D(pool_size=4, strides=4))
 
-    model.add(layers.Conv3D(filters=4*first_conv_channel, kernel_size=3))
+    model.add(layers.Conv3D(filters=4*first_conv_channel, kernel_size=3, padding="same"))
     model.add(layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25)))
     model.add(layers.MaxPooling3D(pool_size=4, strides=4))
 
