@@ -100,6 +100,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
                  data,
                  batch_size,
                  mode=Mode.NORMAL,
+                 vector_generator=None,
                  input_shape=None,
                  sample_count=1,
                  number_of_threads_in_multithreaded=4,
@@ -108,6 +109,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
         self._data = data
         self.mode = mode
+        self.vector_generator = vector_generator
         self.input_shape = input_shape
         if self.mode == DataLoader.Mode.SAMPLE:
             self._data *= sample_count
@@ -134,6 +136,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
             if 0 < self.epochs <= self._current_epoch:
                 raise StopIteration
         data_batch = []
+        vector_batch = None if self.vector_generator is None else []
         label_batch = []
         for i in range(self.batch_size):
             index = self._current_position + i
@@ -141,32 +144,39 @@ class DataLoader(SlimDataLoaderBase, ABC):
                 label, data_file, segmentation_file = self._data[index]
                 data_sitk = sitk.ReadImage(data_file)
                 data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
+                vector_gen_args = {"input_shape_pre": data_np.shape[-3:]}
                 if self.mode == DataLoader.Mode.RESIZE:
                     data_np = augment_resize(data_np, None, self.input_shape)[0].squeeze(0)
                     data_np = np.expand_dims(data_np, 0)
+                    vector_gen_args["input_shape_post"] = self.input_shape
                 elif self.mode == DataLoader.Mode.SAMPLE:
                     data_np = np.expand_dims(data_np, 0)
                     with RNGContext(self.seed):
                         data_np = random_crop(data_np, crop_size=self.input_shape)[0].squeeze(0)
+                    vector_gen_args["input_shape_post"] = self.input_shape
+                if self.vector_generator is not None:
+                    vector_batch.append(self.vector_generator(**vector_gen_args))
                 data_batch.append(data_np)
                 label_batch.append(label)
         batch = {"data": np.stack(data_batch),
+                 "vector": None if vector_batch is None else np.stack(vector_batch),
                  "label": np.stack(label_batch)}
         self._current_position += self.number_of_threads_in_multithreaded * self.batch_size
         return batch
 
 
-def get_data_augmenter(data, batch_size=1, mode=DataLoader.Mode.NORMAL, input_shape=None,
+def get_data_augmenter(data, batch_size=1, mode=DataLoader.Mode.NORMAL, vector_generator=None, input_shape=None,
                        sample_count=1, transforms=None, threads=1, seed=None):
     transforms = [] if transforms is None else transforms
     threads = min(int(np.ceil(len(data) / batch_size)), threads)
-    loader = DataLoader(data=data, batch_size=batch_size, mode=mode, input_shape=input_shape,
+    loader = DataLoader(data=data, batch_size=batch_size, mode=mode,
+                        vector_generator=vector_generator, input_shape=input_shape,
                         sample_count=sample_count, number_of_threads_in_multithreaded=threads, seed=seed)
     transforms = transforms + [PrepareForTF()]
     return MultiThreadedAugmenter(loader, Compose(transforms), threads)
 
 
-def get_tf_dataset(augmenter, input_shape):
+def get_tf_dataset(augmenter, input_shapes):
     batch_size = augmenter.generator.batch_size
 
     def generator():
@@ -175,8 +185,9 @@ def get_tf_dataset(augmenter, input_shape):
             yield batch
         augmenter._finish()
 
+    input_signatures = tuple([tf.TensorSpec(shape=(None, *shape), dtype=tf.float32) for shape in input_shapes])
     tf_dataset = tf.data.Dataset.from_generator(generator, output_signature=(
-        tf.TensorSpec(shape=(None, *input_shape), dtype=tf.float32),
+        input_signatures,
         tf.TensorSpec(shape=batch_size, dtype=tf.int32)))
     return tf_dataset
 
@@ -186,7 +197,10 @@ class PrepareForTF(AbstractTransform, ABC):
         data = data_dict["data"]
         data = np.moveaxis(data, 1, -1)
         label = data_dict["label"]
-        return tf.convert_to_tensor(data, dtype=tf.float32), tf.convert_to_tensor(label, dtype=tf.int32)
+        inputs = [tf.convert_to_tensor(data, dtype=tf.float32)]
+        if data_dict["vector"] is not None:
+            inputs.append(tf.convert_to_tensor(data_dict["vector"], dtype=tf.float32))
+        return tuple(inputs), tf.convert_to_tensor(label, dtype=tf.int32)
 
 
 def get_transforms():
@@ -200,11 +214,19 @@ def _fit_batch_size(data_count, max_batch_size):
             return i
 
 
-def get_data_loader_from_config(train_data, validation_data, config, input_shape):
+def get_resize_ratio(**kwargs):
+    pre = np.array(kwargs["input_shape_pre"])
+    post = np.array(kwargs["input_shape_post"])
+    return pre / post
+
+
+def get_data_loader_from_config(train_data, validation_data, config, ct_shape):
     if "data" in config:
         config = config["data"]
     input_type = config["input_type"]
     sample_count = 1
+    vector_shape = None
+    vector_generator = None
     if input_type == "crop":
         mode = DataLoader.Mode.NORMAL
     elif input_type == "sample":
@@ -212,24 +234,32 @@ def get_data_loader_from_config(train_data, validation_data, config, input_shape
         sample_count = config["sample"]["count"]
     elif input_type == "resize":
         mode = DataLoader.Mode.RESIZE
+        if config["resize"]["use_ratio_vector"]:
+            vector_shape = (3,)
+            vector_generator = get_resize_ratio
     else:
         raise ValueError(f"Invalid 'input_type': {config['input_type']}")
     batch_size = _fit_batch_size(len(train_data) * sample_count, config["batch_size"])
     train_augmenter = get_data_augmenter(data=train_data,
                                          batch_size=batch_size,
                                          mode=mode,
-                                         input_shape=input_shape[:-1],
+                                         vector_generator=vector_generator,
+                                         input_shape=ct_shape[:-1],
                                          sample_count=sample_count,
                                          transforms=get_transforms(),
                                          threads=config["loader_threads"])
+    input_shape = [ct_shape]
+    if vector_shape is not None:
+        input_shape.append(vector_shape)
     train_dl = get_tf_dataset(train_augmenter, input_shape)
     #   cache validation data
     val_augmenter = get_data_augmenter(data=validation_data,
                                        batch_size=len(validation_data) * sample_count,
                                        mode=mode,
-                                       input_shape=input_shape[:-1],
+                                       vector_generator=vector_generator,
+                                       input_shape=ct_shape[:-1],
                                        sample_count=sample_count,
                                        seed=42)
     val_dl = val_augmenter.__next__()
     val_augmenter._finish()
-    return train_dl, val_dl
+    return train_dl, val_dl, input_shape

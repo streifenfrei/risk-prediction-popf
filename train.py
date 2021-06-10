@@ -19,14 +19,23 @@ model_mapping = {
 
 
 def load_model(model_string, input_shape):
-    return model_mapping[model_string](input_shape)
+    if isinstance(input_shape, list) or isinstance(input_shape, tuple):
+        if len(input_shape) == 1:
+            ct_shape = input_shape[0]
+            vector_shape = None
+        else:
+            ct_shape, vector_shape = input_shape
+    else:
+        ct_shape = input_shape
+        vector_shape = None
+    return model_mapping[model_string](ct_shape=ct_shape, vector_shape=vector_shape)
 
 
 def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
     config_training = config["training"]
     config_data = config["data"]
-    dataset, input_shape = get_dataset_from_config(config_data)
+    dataset, ct_shape = get_dataset_from_config(config_data)
     k_fold = StratifiedKFold(n_splits=config_training["folds"], shuffle=False)
     # cross validation
     for i, (train, validation) in enumerate(k_fold.split(dataset, [x[0] for x in dataset]), start=1):
@@ -38,7 +47,7 @@ def main(config, custom_model_generator=None):
         # initialize data loader
         train = [dataset[i] for i in train.tolist()]
         validation = [dataset[i] for i in validation.tolist()]
-        train_dl, val_dl = get_data_loader_from_config(train, validation, config_data, input_shape)
+        train_dl, val_dl, input_shape = get_data_loader_from_config(train, validation, config_data, ct_shape)
         # initialize model
         model = load_model(config["model"], input_shape)
         model.compile(optimizer=config_training["optimizer"],

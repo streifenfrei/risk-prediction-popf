@@ -1,30 +1,33 @@
+import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
 # based on https://www.nature.com/articles/s41598-021-85671-y
 
 
-def get_model(input_shape=(None, None, None, 1), first_conv_channel=32, dropout=0.3):
-    model = keras.Sequential(name="Lombardo")
+def get_model(ct_shape=(None, None, None, 1), vector_shape=None, first_conv_channel=32, dropout=0.3):
+    ct = layers.Input(shape=ct_shape)
+    inputs = [ct]
+    x = layers.Conv3D(filters=first_conv_channel, kernel_size=5, input_shape=ct_shape, padding="same")(ct)
+    x = layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25))(x)
+    x = layers.MaxPooling3D(pool_size=4, strides=4)(x)
 
-    model.add(layers.Conv3D(filters=first_conv_channel, kernel_size=5, input_shape=input_shape, padding="same"))
-    model.add(layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25)))
-    model.add(layers.MaxPooling3D(pool_size=4, strides=4))
+    x = layers.Conv3D(filters=2 * first_conv_channel, kernel_size=3, padding="same")(x)
+    x = layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25))(x)
+    x = layers.MaxPooling3D(pool_size=4, strides=4)(x)
 
-    model.add(layers.Conv3D(filters=2*first_conv_channel, kernel_size=3, padding="same"))
-    model.add(layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25)))
-    model.add(layers.MaxPooling3D(pool_size=4, strides=4))
+    x = layers.Conv3D(filters=4 * first_conv_channel, kernel_size=3, padding="same")(x)
+    x = layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25))(x)
+    x = layers.MaxPooling3D(pool_size=4, strides=4)(x)
 
-    model.add(layers.Conv3D(filters=4*first_conv_channel, kernel_size=3, padding="same"))
-    model.add(layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25)))
-    model.add(layers.MaxPooling3D(pool_size=4, strides=4))
-
-    model.add(layers.Flatten())
-    model.add(layers.Dense(4*first_conv_channel))
-    model.add(layers.Dense(8*first_conv_channel))
-    model.add(layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25)))
-    model.add(layers.Dropout(rate=dropout))
-    model.add(layers.Dense(1, activation="sigmoid"))
-
-    return model
-
+    x = layers.Flatten()(x)
+    if vector_shape is not None:
+        vector = layers.Input(shape=vector_shape)
+        inputs.append(vector)
+        x = tf.concat([x, vector], axis=1)
+    x = layers.Dense(4 * first_conv_channel)(x)
+    x = layers.Dense(8 * first_conv_channel)(x)
+    x = layers.PReLU(alpha_initializer=keras.initializers.Constant(value=0.25))(x)
+    x = layers.Dropout(rate=dropout)(x)
+    x = layers.Dense(1, activation="sigmoid")(x)
+    return tf.keras.Model(inputs=inputs, outputs=x, name="Lombardo")
