@@ -1,6 +1,7 @@
 import csv
 import os
 from abc import ABC
+from enum import IntEnum
 
 import SimpleITK as sitk
 import numpy as np
@@ -47,9 +48,16 @@ def scan_data_directory(data_directory, crop="none", blacklist=None):
 def get_dataset_from_config(config):
     if "data" in config:
         config = config["data"]
-    dataset = scan_data_directory(config["path"], crop=config["crop"], blacklist=config["blacklist"])
-    if config["sample"]:
-        input_shape = [*config["sample_size"], 1]
+    masked = config["masked"]
+    if config["input_type"] == "crop":
+        crop = "seg" if masked else config["crop"]["type"]
+    elif config["input_type"] == "sample" or config["input_type"] == "resize":
+        crop = "roi_only_masked" if masked else "roi_only"
+    else:
+        raise ValueError(f"Invalid 'input_type': {config['input_type']}")
+    dataset = scan_data_directory(config["path"], crop=crop, blacklist=config["blacklist"])
+    if config["input_type"] == "sample" or config["input_type"] == "resize":
+        input_shape = [*config[config["input_type"]]["size"], 1]
     else:
         dummy_loader = get_data_augmenter(dataset[:1])
         input_shape = next(dummy_loader)[0].shape[-4:]
@@ -83,20 +91,25 @@ class RNGContext:
 
 
 class DataLoader(SlimDataLoaderBase, ABC):
+    class Mode(IntEnum):
+        NORMAL = 0
+        SAMPLE = 1
+        RESIZE = 2
+
     def __init__(self,
                  data,
                  batch_size,
-                 sample_size=None,
+                 mode=Mode.NORMAL,
+                 input_shape=None,
                  sample_count=1,
-                 resize_to_sample_size=False,
                  number_of_threads_in_multithreaded=4,
                  epochs=1,
                  seed=None):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
         self._data = data
-        self.sample_size = sample_size
-        self.resize_to_sample_size = resize_to_sample_size
-        if self.sample_size is not None:
+        self.mode = mode
+        self.input_shape = input_shape
+        if self.mode == DataLoader.Mode.SAMPLE:
             self._data *= sample_count
         self._current_position = 0
         self.was_initialized = False
@@ -128,14 +141,13 @@ class DataLoader(SlimDataLoaderBase, ABC):
                 label, data_file, segmentation_file = self._data[index]
                 data_sitk = sitk.ReadImage(data_file)
                 data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
-                if self.sample_size is not None:
-                    if self.resize_to_sample_size:
-                        data_np = augment_resize(data_np, None, self.sample_size)[0].squeeze(0)
-                        data_np = np.expand_dims(data_np, 0)
-                    else:
-                        data_np = np.expand_dims(data_np, 0)
-                        with RNGContext(self.seed):
-                            data_np = random_crop(data_np, crop_size=self.sample_size)[0].squeeze(0)
+                if self.mode == DataLoader.Mode.RESIZE:
+                    data_np = augment_resize(data_np, None, self.input_shape)[0].squeeze(0)
+                    data_np = np.expand_dims(data_np, 0)
+                elif self.mode == DataLoader.Mode.SAMPLE:
+                    data_np = np.expand_dims(data_np, 0)
+                    with RNGContext(self.seed):
+                        data_np = random_crop(data_np, crop_size=self.input_shape)[0].squeeze(0)
                 data_batch.append(data_np)
                 label_batch.append(label)
         batch = {"data": np.stack(data_batch),
@@ -144,13 +156,12 @@ class DataLoader(SlimDataLoaderBase, ABC):
         return batch
 
 
-def get_data_augmenter(data, batch_size=1, sample_size=None, sample_count=1,
-                       resize_to_sample_size=False, transforms=None, threads=1, seed=None):
+def get_data_augmenter(data, batch_size=1, mode=DataLoader.Mode.NORMAL, input_shape=None,
+                       sample_count=1, transforms=None, threads=1, seed=None):
     transforms = [] if transforms is None else transforms
     threads = min(int(np.ceil(len(data) / batch_size)), threads)
-    loader = DataLoader(data=data, batch_size=batch_size, sample_size=sample_size,
-                        sample_count=sample_count, resize_to_sample_size=resize_to_sample_size,
-                        number_of_threads_in_multithreaded=threads, seed=seed)
+    loader = DataLoader(data=data, batch_size=batch_size, mode=mode, input_shape=input_shape,
+                        sample_count=sample_count, number_of_threads_in_multithreaded=threads, seed=seed)
     transforms = transforms + [PrepareForTF()]
     return MultiThreadedAugmenter(loader, Compose(transforms), threads)
 
@@ -168,6 +179,7 @@ def get_tf_dataset(augmenter, input_shape):
         tf.TensorSpec(shape=(None, *input_shape), dtype=tf.float32),
         tf.TensorSpec(shape=batch_size, dtype=tf.int32)))
     return tf_dataset
+
 
 class PrepareForTF(AbstractTransform, ABC):
     def __call__(self, **data_dict):
@@ -191,21 +203,32 @@ def _fit_batch_size(data_count, max_batch_size):
 def get_data_loader_from_config(train_data, validation_data, config, input_shape):
     if "data" in config:
         config = config["data"]
-    batch_size = _fit_batch_size(len(train_data) * config["sample_count"], config["batch_size"])
+    input_type = config["input_type"]
+    sample_count = 1
+    if input_type == "crop":
+        mode = DataLoader.Mode.NORMAL
+    elif input_type == "sample":
+        mode = DataLoader.Mode.SAMPLE
+        sample_count = config["sample"]["count"]
+    elif input_type == "resize":
+        mode = DataLoader.Mode.RESIZE
+    else:
+        raise ValueError(f"Invalid 'input_type': {config['input_type']}")
+    batch_size = _fit_batch_size(len(train_data) * sample_count, config["batch_size"])
     train_augmenter = get_data_augmenter(data=train_data,
                                          batch_size=batch_size,
-                                         sample_size=config["sample_size"],
-                                         sample_count=config["sample_count"],
-                                         resize_to_sample_size=config["resize_to_sample_size"],
+                                         mode=mode,
+                                         input_shape=input_shape[:-1],
+                                         sample_count=sample_count,
                                          transforms=get_transforms(),
                                          threads=config["loader_threads"])
     train_dl = get_tf_dataset(train_augmenter, input_shape)
     #   cache validation data
     val_augmenter = get_data_augmenter(data=validation_data,
-                                       batch_size=len(validation_data) * config["sample_count"],
-                                       sample_size=config["sample_size"],
-                                       sample_count=config["sample_count"],
-                                       resize_to_sample_size=config["resize_to_sample_size"],
+                                       batch_size=len(validation_data) * sample_count,
+                                       mode=mode,
+                                       input_shape=input_shape[:-1],
+                                       sample_count=sample_count,
                                        seed=42)
     val_dl = val_augmenter.__next__()
     val_augmenter._finish()

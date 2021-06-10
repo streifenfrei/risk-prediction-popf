@@ -14,7 +14,7 @@ model_mapping = {
     "simplenet": simple_net.get_model,
     "lombardo": lombardo.get_model,
     "squeezenet": squeeze_net.get_model,
-    "custom": None,
+    "custom": None
 }
 
 
@@ -22,24 +22,10 @@ def load_model(model_string, input_shape):
     return model_mapping[model_string](input_shape)
 
 
-def _prepare_config(config):
-    config_training = config["training"]
-    config_data = config["data"]
-    config_data["sample_size"] = config_data["sample_size"] if config_data["sample"] else None
-    config_data["sample_count"] = config_data["sample_count"] \
-        if config_data["sample"] and not config_data["resize_to_sample_size"] else 1
-    if config_data["sample"]:
-        if config_data["crop"] in ["full", "fixed", "roi"]:
-            config_data["crop"] = "roi_only"
-        elif config_data["crop"] == "seg":
-            config_data["crop"] = "roi_only_masked"
-    config_data["blacklist"] = config_data["blacklist"] if "blacklist" in config_data else None
-    return config, config_training, config_data
-
-
 def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
-    config, config_training, config_data = _prepare_config(config)
+    config_training = config["training"]
+    config_data = config["data"]
     dataset, input_shape = get_dataset_from_config(config_data)
     k_fold = StratifiedKFold(n_splits=config_training["folds"], shuffle=False)
     # cross validation
@@ -56,7 +42,7 @@ def main(config, custom_model_generator=None):
         # initialize model
         model = load_model(config["model"], input_shape)
         model.compile(optimizer=config_training["optimizer"],
-                      loss=tf.losses.BinaryCrossentropy(from_logits=True),
+                      loss=tf.losses.BinaryCrossentropy(),
                       metrics=["AUC"])
         checkpoint_file = os.path.join(checkpoint_dir, "{epoch:04d}.ckpt")
         checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_file,
@@ -108,10 +94,14 @@ def main(config, custom_model_generator=None):
                 metrics[m].append(fold_summary[m])
     for m in metrics:
         metrics[m] = [sum(i) / s for i, s in zip(zip(*metrics[m]), sizes)]
-    with tf.summary.create_file_writer(config["workspace"]).as_default():
-        for m in metrics:
-            for i, d in enumerate(metrics[m]):
-                tf.summary.scalar(f"avg_{m}", d, step=i)
+    with tf.summary.create_file_writer(os.path.join(config["workspace"], "train")).as_default():
+        for i in range(config_training["epochs"]):
+            tf.summary.scalar(f"avg_loss", metrics["loss"][i], step=i)
+            tf.summary.scalar(f"avg_auc", metrics["auc"][i], step=i)
+    with tf.summary.create_file_writer(os.path.join(config["workspace"], "val")).as_default():
+        for i in range(config_training["epochs"]):
+            tf.summary.scalar(f"avg_loss", metrics["val_loss"][i], step=i)
+            tf.summary.scalar(f"avg_auc", metrics["val_auc"][i], step=i)
     cv_summary = {}
     for m in metrics:
         cv_summary[m] = max(metrics[m])
