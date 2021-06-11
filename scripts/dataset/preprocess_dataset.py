@@ -171,7 +171,7 @@ def normalize(data, intensity_range, normalization_range):
 
 def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, crops=None):
     if crops is None:
-        crops = LABELS
+        crops = config["crops"] if "crops" in config else LABELS
     crops = set(crops)
     assert len(crops - set(LABELS)) == 0, f"invalid crops argument: {crops}"
     target_size = config["resampling"]["size"]
