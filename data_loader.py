@@ -10,7 +10,9 @@ from batchgenerators.augmentations.crop_and_pad_augmentations import random_crop
 from batchgenerators.augmentations.spatial_transformations import augment_resize
 
 from batchgenerators.dataloading import SlimDataLoaderBase, MultiThreadedAugmenter
-from batchgenerators.transforms import AbstractTransform, Compose, MirrorTransform, RandomShiftTransform
+from batchgenerators.transforms import AbstractTransform, Compose
+
+from augmentation import get_transforms
 
 
 def scan_data_directory(data_directory, crop="none", blacklist=None):
@@ -67,6 +69,8 @@ def get_dataset_from_config(config):
 
 def visualize_data(data: np.ndarray):
     import matplotlib.pyplot as plt
+    if data.ndim == 5:
+        data = data[1, :, :, :, :]
     data = data.squeeze()
     for image in np.split(data, data.shape[-1], -1):
         image = np.moveaxis(image, 0, 1)
@@ -201,11 +205,6 @@ class PrepareForTF(AbstractTransform, ABC):
         if data_dict["vector"] is not None:
             inputs.append(tf.convert_to_tensor(data_dict["vector"], dtype=tf.float32))
         return tuple(inputs), tf.convert_to_tensor(label, dtype=tf.int32)
-
-
-def get_transforms():
-    return [MirrorTransform(),
-            RandomShiftTransform(shift_mu=0, shift_sigma=3, p_per_channel=1)]
 
 
 def _fit_batch_size(data_count, max_batch_size):
