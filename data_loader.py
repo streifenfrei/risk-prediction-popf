@@ -252,13 +252,13 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape):
         input_shape.append(vector_shape)
     train_dl = get_tf_dataset(train_augmenter, input_shape)
     #   cache validation data
+    batch_size = _fit_batch_size(len(validation_data) * sample_count, config["batch_size"])
     val_augmenter = get_data_augmenter(data=validation_data,
-                                       batch_size=len(validation_data) * sample_count,
+                                       batch_size=batch_size,
                                        mode=mode,
                                        vector_generator=vector_generator,
                                        input_shape=ct_shape[:-1],
                                        sample_count=sample_count,
                                        seed=42)
-    val_dl = val_augmenter.__next__()
-    val_augmenter._finish()
+    val_dl = get_tf_dataset(val_augmenter, input_shape)
     return train_dl, val_dl, input_shape

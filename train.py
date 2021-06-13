@@ -49,6 +49,7 @@ def train_model(config,
     callbacks = []
     initial_epoch = 0
     if checkpoint_dir is not None:
+        val_dl = val_dl.cache(os.path.join(checkpoint_dir, "val_cache"))
         checkpoint_file = os.path.join(checkpoint_dir, "{epoch:04d}.ckpt")
         checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_file,
                                                                  monitor="val_auc",
