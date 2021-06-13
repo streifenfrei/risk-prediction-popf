@@ -102,18 +102,20 @@ def main(config, custom_model_generator=None):
     # cross validation
     if config_training["folds"] >= 2:
         k_fold = StratifiedKFold(n_splits=config_training["folds"], shuffle=False)
-        history = get_history_from_tb(config["workspace"])["epoch_loss"]
         folds_done = 0
-        for key in history:
-            path = os.path.normpath(key).split(os.sep)
-            if path[-1] == "train":
-                continue
-            fold = int(path[1])
-            if len(history[key]) == config_training["epochs"]:
-                folds_done += 1
-            else:
-                folds_done = fold - 1
-                break
+        history = get_history_from_tb(config["workspace"])
+        if "epoch_loss" in history:
+            history = history["epoch_loss"]
+            for key in history:
+                path = os.path.normpath(key).split(os.sep)
+                if path[-1] == "train":
+                    continue
+                fold = int(path[1])
+                if len(history[key]) == config_training["epochs"]:
+                    folds_done += 1
+                else:
+                    folds_done = fold - 1
+                    break
 
         for i, (train, validation) in enumerate(k_fold.split(dataset, [x[0] for x in dataset]), start=1):
             if i <= folds_done:
