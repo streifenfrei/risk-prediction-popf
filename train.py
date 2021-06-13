@@ -71,32 +71,60 @@ def train_model(config,
                      callbacks=callbacks)
 
 
+def get_history_from_tb(directory):
+    history = {}
+    for root, _, files in os.walk(directory):
+        key = root[len(directory) + 1:]
+        for file in files:
+            if file[:6] == "events":
+                file = os.path.join(root, file)
+                for event in tf.compat.v1.train.summary_iterator(file):
+                    for value in event.summary.value:
+                        if value.tag not in history:
+                            history[value.tag] = {}
+                        if key not in history[value.tag]:
+                            history[value.tag][key] = []
+                        if not any(x[0] == event.step for x in history[value.tag][key]):
+                            history[value.tag][key].append((event.step, value.simple_value))
+    for tag in history.values():
+        for series in tag:
+            tag[series].sort(key=lambda x: x[0])
+            tag[series] = [x[1] for x in tag[series]]
+    return history
+
+
 def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
     config_training = config["training"]
     config_data = config["data"]
     dataset, ct_shape = get_dataset_from_config(config_data)
+
     # cross validation
     if config_training["folds"] >= 2:
         k_fold = StratifiedKFold(n_splits=config_training["folds"], shuffle=False)
+        history = get_history_from_tb(config["workspace"])["epoch_loss"]
+        folds_done = 0
+        for key in history:
+            path = os.path.normpath(key).split(os.sep)
+            if path[-1] == "train":
+                continue
+            fold = int(path[1])
+            if len(history[key]) == config_training["epochs"]:
+                folds_done += 1
+            else:
+                folds_done = fold - 1
+                break
+
         for i, (train, validation) in enumerate(k_fold.split(dataset, [x[0] for x in dataset]), start=1):
-            checkpoint_dir = os.path.join(config["workspace"], "cross_validation", str(i))
-            log_dir = os.path.join(checkpoint_dir, "logs")
-            fold_summary_file = os.path.join(log_dir, "summary.json")
-            if os.path.exists(fold_summary_file):
+            if i <= folds_done:
                 continue
             train = [dataset[i] for i in train.tolist()]
             validation = [dataset[i] for i in validation.tolist()]
-            history = train_model(config, train, validation, ct_shape, checkpoint_dir=checkpoint_dir, log_dir=log_dir)
-            # save summary of fold
-            fold_summary = {
-                "loss": list(history.history["loss"]),
-                "val_loss": list(history.history["val_loss"]),
-                "auc": list(history.history["auc"]),
-                "val_auc": list(history.history["val_auc"]),
-            }
-            with open(fold_summary_file, "w") as file:
-                json.dump(fold_summary, file, indent=4)
+            checkpoint_dir = os.path.join(config["workspace"], "cross_validation", str(i))
+            log_dir = os.path.join(checkpoint_dir, "logs")
+            train_model(config, train, validation, ct_shape,
+                        checkpoint_dir=checkpoint_dir,
+                        log_dir=log_dir)
 
         # save summary of cross validation
         metrics = {
@@ -105,21 +133,18 @@ def main(config, custom_model_generator=None):
             "auc": [],
             "val_auc": []
         }
-        sizes = [0 for _ in range(config_training["epochs"])]
-        for i in range(1, config_training["folds"] + 1):
-            fold_summary_file = os.path.join(config["workspace"], "cross_validation", str(i), "logs", "summary.json")
-            with open(fold_summary_file, "r") as file:
-                fold_summary = json.load(file)
-                missing = config_training["epochs"] - len(fold_summary["auc"])
-                for i in range(config_training["epochs"]):
-                    sizes[i] += 1 if i >= missing else 0
-                for _ in range(missing):
-                    for m in metrics:
-                        fold_summary[m].insert(0, 0)
-                for m in metrics:
-                    metrics[m].append(fold_summary[m])
+        tb_mapping = {
+            "epoch_loss": {"train": "loss", "validation": "val_loss"},
+            "epoch_auc": {"train": "auc", "validation": "val_auc"}
+        }
+        history = get_history_from_tb(config["workspace"])
+        for tb_metric in history:
+            if tb_metric in tb_mapping:
+                for key in history[tb_metric]:
+                    path = os.path.normpath(key).split(os.sep)
+                    metrics[tb_mapping[tb_metric][path[-1]]].append(history[tb_metric][key])
         for m in metrics:
-            metrics[m] = [sum(i) / s for i, s in zip(zip(*metrics[m]), sizes)]
+            metrics[m] = [sum(i) / config_training["folds"] for i in zip(*metrics[m])]
         with tf.summary.create_file_writer(os.path.join(config["workspace"], "train")).as_default():
             for i in range(config_training["epochs"]):
                 tf.summary.scalar(f"avg_loss", metrics["loss"][i], step=i)
@@ -128,16 +153,17 @@ def main(config, custom_model_generator=None):
             for i in range(config_training["epochs"]):
                 tf.summary.scalar(f"avg_loss", metrics["val_loss"][i], step=i)
                 tf.summary.scalar(f"avg_auc", metrics["val_auc"][i], step=i)
-        cv_summary = {}
-        for m in metrics:
-            cv_summary[m] = max(metrics[m])
-        cv_summary["val_auc_epoch"] = metrics["val_auc"].index(max(metrics["val_auc"]))
-        cv_summary_file = os.path.join(config["workspace"], "summary.json")
-        with open(cv_summary_file, "w") as file:
-            json.dump(cv_summary, file)
+        with open(os.path.join(config["workspace"], "summary.json"), "w") as file:
+            json.dump(
+                {
+                    "auc": max(metrics["auc"]),
+                    "val_auc": max(metrics["val_auc"]),
+                    "val_auc_epoch": metrics["val_auc"].index(max(metrics["val_auc"]) + 1)
+                }, file)
     else:
         train, validation = train_test_split(dataset,
                                              train_size=config_training["train_size"],
+                                             random_state=42,
                                              stratify=[x[0] for x in dataset])
         log_dir = os.path.join(config["workspace"], "logs")
         history = train_model(config, train, validation, ct_shape, checkpoint_dir=config["workspace"], log_dir=log_dir)
