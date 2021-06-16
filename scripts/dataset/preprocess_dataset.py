@@ -58,7 +58,7 @@ def clip_intensities(data):
     return _np_to_sitk(data_np, data)
 
 
-def get_segmentation_roi(segmentation, roi_margin):
+def get_segmentation_roi(segmentation):
     segmentation_np = sitk.GetArrayFromImage(segmentation).transpose()
     x = np.any(segmentation_np, axis=(1, 2))
     x_min, x_max = np.where(x)[0][[0, -1]]
@@ -66,13 +66,13 @@ def get_segmentation_roi(segmentation, roi_margin):
     y_min, y_max = np.where(y)[0][[0, -1]]
     z = np.any(segmentation_np, axis=(0, 1))
     z_min, z_max = np.where(z)[0][[0, -1]]
-    segmentation = segmentation[x_min-roi_margin[0]:x_max+roi_margin[0],
-                                y_min-roi_margin[1]:y_max+roi_margin[1],
-                                z_min-roi_margin[2]:z_max+roi_margin[2]]
+    segmentation = segmentation[x_min:x_max,
+                                y_min:y_max,
+                                z_min:z_max]
     return segmentation
 
 
-def resample(data, segmentation, new_size, new_spacing, interpolator, roi_margin):
+def resample(data, segmentation, new_size, new_spacing, interpolator):
     center = data.TransformContinuousIndexToPhysicalPoint([sz / 2.0 for sz in data.GetSize()])
     new_origin = [c - c_index * n_spc for c, c_index, n_spc in zip(center, [sz / 2.0 for sz in new_size], new_spacing)]
     data = sitk.Resample(data, size=new_size,
@@ -80,7 +80,7 @@ def resample(data, segmentation, new_size, new_spacing, interpolator, roi_margin
                          outputSpacing=new_spacing,
                          interpolator=interpolator,
                          defaultPixelValue=HOUNSFIELD_BOUNDARIES[0])
-    segmentation = get_segmentation_roi(segmentation, roi_margin)
+    segmentation = get_segmentation_roi(segmentation)
     new_size = [int(o_sz * o_spc / n_spc) for o_sz, o_spc, n_spc in
                 zip(segmentation.GetSize(), segmentation.GetSpacing(), new_spacing)]
     segmentation = sitk.Resample(segmentation, size=new_size,
@@ -186,7 +186,7 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             else [config["normalization"][f"ir_{crop}"], False]
     normalization_range = config["normalization"]["target_range"]
     labels_file = config["labels"]
-    roi_margin = config["cropping"]["roi_margin"]
+    roi_margin = np.array(config["cropping"]["roi_margin"])
 
     dataset = []
     blacklist = config["blacklist"] if "blacklist" in config else []
@@ -206,7 +206,7 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             continue
         if do_resample:
             data_sitk, segmentation_sitk = resample(data_sitk, segmentation_sitk, target_size,
-                                                    target_spacing, interpolator, roi_margin)
+                                                    target_spacing, interpolator)
             data_sitk = clip_intensities(data_sitk)
             if not os.path.exists(output_directory):
                 os.makedirs(output_directory)
@@ -231,7 +231,8 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
             # crops
             crop = Crop(data_sitk, segmentation_sitk, bb_size)
-            crop_roi_only = Crop(data_sitk, segmentation_sitk, segmentation_sitk.GetSize())
+            roi_size = np.array(segmentation_sitk.GetSize() + 2*roi_margin)
+            crop_roi_only = Crop(data_sitk, segmentation_sitk, roi_size)
             # fixed bb crop
             if "fixed" in crops:
                 data_sitk = crop.fixed()
