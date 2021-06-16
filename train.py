@@ -6,12 +6,13 @@ import tensorflow as tf
 import yaml
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
-from models import simple_net, squeeze_net, lombardo
+from models import simple_net, res_net, squeeze_net, lombardo
 from data_loader import get_dataset_from_config, get_data_loader_from_config
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_mapping = {
     "simplenet": simple_net.get_model,
+    "resnet": res_net.get_model,
     "lombardo": lombardo.get_model,
     "squeezenet": squeeze_net.get_model,
     "custom": None
@@ -161,7 +162,7 @@ def main(config, custom_model_generator=None):
                 {
                     "auc": max(metrics["auc"]),
                     "val_auc": max(metrics["val_auc"]),
-                    "val_auc_epoch": metrics["val_auc"].index(max(metrics["val_auc"]) + 1)
+                    "val_auc_epoch": metrics["val_auc"].index(max(metrics["val_auc"])) + 1
                 }, file)
     else:
         train, validation = train_test_split(dataset,
