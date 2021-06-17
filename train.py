@@ -19,7 +19,9 @@ model_mapping = {
 }
 
 
-def load_model(model_string, input_shape):
+def load_model(model_string, input_shape, extra_options=None):
+    if extra_options is None:
+        extra_options = {}
     if isinstance(input_shape, list) or isinstance(input_shape, tuple):
         if len(input_shape) == 1:
             ct_shape = input_shape[0]
@@ -29,7 +31,7 @@ def load_model(model_string, input_shape):
     else:
         ct_shape = input_shape
         vector_shape = None
-    return model_mapping[model_string](ct_shape=ct_shape, vector_shape=vector_shape)
+    return model_mapping[model_string](ct_shape=ct_shape, vector_shape=vector_shape, **extra_options)
 
 
 def train_model(config,
@@ -43,7 +45,8 @@ def train_model(config,
     config_data = config["data"]
     train_dl, val_dl, input_shape = get_data_loader_from_config(train_data, validation_data, config_data, ct_shape)
     # initialize model
-    model = load_model(config["model"], input_shape)
+    extra_options = config.get("model_extra_options", None)
+    model = load_model(config["model"], input_shape, extra_options)
     model.compile(optimizer=config_training["optimizer"],
                   loss=tf.losses.BinaryCrossentropy(),
                   metrics=["AUC"])
