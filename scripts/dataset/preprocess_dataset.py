@@ -91,6 +91,17 @@ def resample(data, segmentation, new_size, new_spacing, interpolator):
     return data, segmentation
 
 
+def fit_roi(size, aspect_ratio):
+    for dim in range(len(size)):
+        new_size = np.zeros(3, dtype=int)
+        new_size[dim] = size[dim]
+        new_size[(dim + 1) % 3] = np.ceil(size[dim] * aspect_ratio[(dim + 1) % 3] / aspect_ratio[dim])
+        new_size[(dim + 2) % 3] = np.ceil(size[dim] * aspect_ratio[(dim + 2) % 3] / aspect_ratio[dim])
+        if not any(n_sz < o_sz for o_sz, n_sz in zip(size, new_size)):
+            return new_size
+    raise ValueError("It's impossible to get here.")
+
+
 class Crop:
     def __init__(self, data: sitk.Image, segmentation: sitk.Image, bb_size):
         self.segmentation = segmentation
@@ -174,6 +185,10 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
         crops = config["crops"] if "crops" in config else LABELS
     crops = set(crops)
     assert len(crops - set(LABELS)) == 0, f"invalid crops argument: {crops}"
+    if "tasks" in config:
+        do_resample = "resample" in config["tasks"]
+        do_crop = "crop" in config["tasks"]
+        do_normalize = "normalize" in config["tasks"]
     target_size = config["resampling"]["size"]
     target_spacing = config["resampling"]["spacing"]
     interpolator = INTERPOLATION_MAPPING[config["resampling"]["interpolation"]]
@@ -187,6 +202,7 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
     normalization_range = config["normalization"]["target_range"]
     labels_file = config["labels"]
     roi_margin = np.array(config["cropping"]["roi_margin"])
+    roi_aspect_ratio = config["cropping"]["roi_aspect_ratio"] if "roi_aspect_ratio" in config["cropping"] else None
 
     dataset = []
     blacklist = config["blacklist"] if "blacklist" in config else []
@@ -224,35 +240,45 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
         print()
 
     # Generate cropped data (and calculate intensity ranges if required)
+    minimal_roi_precision_after_ar_fit = 1
     for i, (patient_id, _, _) in enumerate(dataset):
         output_directory = os.path.join(out, str(patient_id), "raw")
         data_sitk = sitk.ReadImage(os.path.join(output_directory, "full.nrrd"))
+        data_sitks = {}
         if do_crop:
             segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
             # crops
             crop = Crop(data_sitk, segmentation_sitk, bb_size)
             roi_size = np.array(segmentation_sitk.GetSize() + 2*roi_margin)
+            if roi_aspect_ratio is not None:
+                roi_size_fit = fit_roi(roi_size, roi_aspect_ratio)
+                minimal_roi_precision_after_ar_fit = min(minimal_roi_precision_after_ar_fit,
+                                                         np.prod(roi_size) / np.prod(roi_size_fit))
+                roi_size = roi_size_fit
             crop_roi_only = Crop(data_sitk, segmentation_sitk, roi_size)
             # fixed bb crop
             if "fixed" in crops:
                 data_sitk = crop.fixed()
                 sitk.WriteImage(data_sitk, os.path.join(output_directory, "fixed.nrrd"))
+                data_sitks["fixed"] = data_sitk
             # roi crop
             if "roi" in crops:
                 data_sitk = crop.roi()
                 sitk.WriteImage(data_sitk, os.path.join(output_directory, "roi.nrrd"))
+                data_sitks["roi"] = data_sitk
                 roi_only = crop_roi_only.fixed()
                 sitk.WriteImage(roi_only, os.path.join(output_directory, "roi_only.nrrd"))
             # segmentation crop
             if "seg" in crops:
                 data_sitk = crop.seg()
                 sitk.WriteImage(crop.seg(), os.path.join(output_directory, "seg.nrrd"))
+                data_sitks["seg"] = data_sitk
                 roi_only_masked = crop_roi_only.seg()
                 sitk.WriteImage(roi_only_masked, os.path.join(output_directory, "roi_only_masked.nrrd"))
             print(f"\rCropping: {i + 1}/{len(dataset)}", end="")
         for crop in crops:
             if intensity_ranges[crop][1]:
-                intensity_ranges[crop][0] = _update_intensity_range(intensity_ranges[crop][0], data_sitk)
+                intensity_ranges[crop][0] = _update_intensity_range(intensity_ranges[crop][0], data_sitks[crop])
     print()
     # Normalize intensities
     if do_normalize:

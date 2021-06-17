@@ -7,8 +7,9 @@ import SimpleITK as sitk
 import numpy as np
 
 from data_loader import scan_data_directory
-from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, LABELS
+from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, LABELS, get_segmentation_roi, fit_roi
 
+ASPECT_RATIO_RANGE = [(1, 1, 1), (10, 10, 10)]
 
 def histogram(data):
     return np.histogram(data, bins=np.arange(HOUNSFIELD_BOUNDARIES[0], HOUNSFIELD_BOUNDARIES[1] + 1))[0]
@@ -36,14 +37,35 @@ def analyze(dataset, do_histograms=True, do_bounding_boxes=True, labels=None):
             for data_np, histo in zip(data_np_list, histograms):
                 histo.append(histogram(data_np).tolist())
         if do_bounding_boxes:
-            min_bb_size = np.array([min(x, y) for x, y in zip(min_bb_size, segmentation_sitk.GetSize())])
-            max_bb_size = np.array([max(x, y + 1) for x, y in zip(max_bb_size, segmentation_sitk.GetSize())])
-            rois.append(np.array(segmentation_sitk.GetSize()))
+            roi_size = get_segmentation_roi(segmentation_sitk).GetSize()
+            min_bb_size = np.array([min(x, y) for x, y in zip(min_bb_size, roi_size)])
+            max_bb_size = np.array([max(x, y + 1) for x, y in zip(max_bb_size, roi_size)])
+            rois.append(np.array(roi_size))
         print(f"\rCollect data: {i + 1}/{len(dataset)}", end="")
     print()
     results = {"ids": ids,
                "histograms": histograms,
                "rois": [r.tolist() for r in rois]}
+
+    # analyze different roi aspect ratios
+    ar_coverages = np.zeros(ASPECT_RATIO_RANGE[1])
+    ar_coverages_std = np.zeros(ASPECT_RATIO_RANGE[1])
+    ar_coverages_min = np.zeros(ASPECT_RATIO_RANGE[1])
+    search_space = list(product(*[range(lower, upper) for lower, upper in zip(*ASPECT_RATIO_RANGE)]))
+    for i, aspect_ratio in enumerate(search_space):
+        x, y, z = aspect_ratio
+        new_rois = [fit_roi(r, aspect_ratio) for r in rois]
+        coverages = [np.prod(r) / np.prod(n_r) for r, n_r in zip(rois, new_rois)]
+        ar_coverages[x][y][z] = np.mean(coverages)
+        ar_coverages_std[x][y][z] = np.std(coverages)
+        ar_coverages_min[x][y][z] = np.min(coverages)
+        print(f"\rAnalyze aspect ratios in range {ASPECT_RATIO_RANGE}: "
+              f"{int(np.ceil(100 * i / len(search_space)))}%", end="")
+    print()
+    results = {**results,
+               "ar_coverages": ar_coverages.tolist(),
+               "ar_coverages_std": ar_coverages_std.tolist(),
+               "ar_coverages_min": ar_coverages_min.tolist(),}
 
     if do_bounding_boxes:
         # calculate precision and recall for all meaningful bounding boxes

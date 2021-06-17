@@ -65,6 +65,26 @@ def visualize_histograms(histograms, coverage, ids, labels):
     print()
 
 
+def visualize_aspect_ratio_coverages(ar_coverages, ar_coverages_std, ar_coverages_min):
+    ar_coverages = np.array(ar_coverages)
+    ar_coverages_std = np.array(ar_coverages_std)
+    ar_coverages_min = np.array(ar_coverages_min)
+
+    def _print_results(index):
+        print(f"\t\tCoverage (mean): {ar_coverages.flatten()[index]}\n"
+              f"\t\tCoverage (standard deviation): {ar_coverages_std.flatten()[index]}\n"
+              f"\t\tCoverage (min): {ar_coverages_min.flatten()[index]}")
+
+    i = np.argmax(ar_coverages)
+    i_full = np.unravel_index(i, ar_coverages.shape)
+    print(f"Optimal mean coverage for aspect ratio {i_full}:")
+    _print_results(i)
+    i = np.argmax(ar_coverages_min)
+    i_full = np.unravel_index(i, ar_coverages_min.shape)
+    print(f"Optimal minimal coverage for aspect ratio {i_full}:")
+    _print_results(i)
+    print()
+
 
 def f_score(precision, recall, beta):
     beta **= 2
@@ -130,6 +150,7 @@ def main(file, hist_coverage, f_beta):
     print(f"Bounding box range: {results['bb_range']}\n")
 
     visualize_histograms(results["histograms"], hist_coverage, results["ids"], results["labels"])
+    visualize_aspect_ratio_coverages(results["ar_coverages"], results["ar_coverages_std"], results["ar_coverages_min"])
     visualize_bb_analysis(results["precisions"], results["precisions_std"], results["precisions_min"],
                           results["recalls"], results["recalls_std"],  results["recalls_min"],
                           results["bb_range"], results["coverage"], f_beta)
