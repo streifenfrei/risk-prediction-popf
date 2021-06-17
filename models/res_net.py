@@ -4,12 +4,12 @@ from tensorflow.keras import layers
 
 
 def residual_block(x, filters, strides=1):
-    skip = layers.Conv3D(filters=filters, kernel_size=3, strides=strides, activation="relu")(x)
+    skip = layers.Conv3D(filters=filters, kernel_size=3, strides=strides, activation="relu", padding="same")(x)
     skip = layers.BatchNormalization()(skip)
 
-    x = layers.Conv3D(filters=filters, kernel_size=3, strides=strides, activation="relu")(x)
+    x = layers.Conv3D(filters=filters, kernel_size=3, strides=strides, activation="relu", padding="same")(x)
     x = layers.BatchNormalization()(x)
-    x = layers.Conv3D(filters=filters, kernel_size=3)(x)
+    x = layers.Conv3D(filters=filters, kernel_size=3, padding="same")(x)
     x = layers.BatchNormalization()(x)
 
     x = tf.add(skip, x)
