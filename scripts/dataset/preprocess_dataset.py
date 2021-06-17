@@ -193,7 +193,7 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
     target_spacing = config["resampling"]["spacing"]
     interpolator = INTERPOLATION_MAPPING[config["resampling"]["interpolation"]]
     bb_size, calculate_bb = ([-np.inf, -np.inf, -np.inf], True) \
-        if config["cropping"]["bb_size"] == "auto" else (config["cropping"]["bb_size"], False)
+        if (config["cropping"]["bb_size"] == "auto" and do_crop) else (config["cropping"]["bb_size"], False)
     intensity_ranges = {}
     for crop in crops:
         intensity_ranges[crop] = [[np.inf, -np.inf], True] \
@@ -229,6 +229,8 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
                 sitk.WriteImage(data_sitk, os.path.join(output_directory, "full.nrrd"))
                 sitk.WriteImage(segmentation_sitk, os.path.join(output_directory, "segmentation.seg.nrrd"))
             print(f"\rResampling: {i + 1}/{len(dataset)}", end="")
+        else:
+            print(f"\rChecking file integrity: {i + 1}/{len(dataset)}", end="")
         if calculate_bb:
             segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
             bb_size = [max(x, y) for x, y in zip(bb_size, segmentation_sitk.GetSize())]
@@ -275,10 +277,10 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
                 data_sitks["seg"] = data_sitk
                 roi_only_masked = crop_roi_only.seg()
                 sitk.WriteImage(roi_only_masked, os.path.join(output_directory, "roi_only_masked.nrrd"))
-            print(f"\rCropping: {i + 1}/{len(dataset)}", end="")
         for crop in crops:
             if intensity_ranges[crop][1]:
                 intensity_ranges[crop][0] = _update_intensity_range(intensity_ranges[crop][0], data_sitks[crop])
+        print(f"\rCropping and/or calculating intensity ranges: {i + 1}/{len(dataset)}", end="")
     print()
     # Normalize intensities
     if do_normalize:
