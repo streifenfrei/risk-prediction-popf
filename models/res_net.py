@@ -28,17 +28,17 @@ def get_model(ct_shape=(None, None, None, 1),
     ct = layers.Input(shape=ct_shape)
     inputs = [ct]
     x = layers.Conv3D(filters=first_conv_channel, kernel_size=3, strides=2, activation="relu",
-                      input_shape=ct_shape, kernel_regularizer=regularizer)(ct)
+                      input_shape=ct_shape)(ct)
     x = layers.BatchNormalization()(x)
 
-    x = residual_block(x, first_conv_channel, regularizer=regularizer)
-    x = residual_block(x, first_conv_channel, regularizer=regularizer)
-    x = residual_block(x, first_conv_channel, strides=2, regularizer=regularizer)
-    x = residual_block(x, first_conv_channel, regularizer=regularizer)
-    x = residual_block(x, 2*first_conv_channel, strides=2, regularizer=regularizer)
-    x = residual_block(x, 2*first_conv_channel, regularizer=regularizer)
-    x = residual_block(x, 4*first_conv_channel, regularizer=regularizer)
-    x = residual_block(x, 4*first_conv_channel, regularizer=regularizer)
+    x = residual_block(x, first_conv_channel)
+    x = residual_block(x, first_conv_channel)
+    x = residual_block(x, first_conv_channel, strides=2)
+    x = residual_block(x, first_conv_channel)
+    x = residual_block(x, 2*first_conv_channel, strides=2)
+    x = residual_block(x, 2*first_conv_channel)
+    x = residual_block(x, 4*first_conv_channel)
+    x = residual_block(x, 4*first_conv_channel)
 
     x = layers.GlobalAveragePooling3D()(x)
     x = layers.Dropout(rate=dropout)(x)
