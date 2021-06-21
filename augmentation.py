@@ -1,12 +1,42 @@
+from abc import ABC
+
 import numpy as np
+from batchgenerators.augmentations.crop_and_pad_augmentations import crop
+from batchgenerators.augmentations.spatial_transformations import augment_resize
 
-from batchgenerators.transforms import SpatialTransform, RandomShiftTransform
+from batchgenerators.transforms import SpatialTransform, RandomShiftTransform, AbstractTransform
 
-ROTATION_P = 0.5
+
+ROTATION_P = 0.75
 ROTATION_ANGLE = 5
-SHIFT_P = 0.5
+SHIFT_P = 0.75
 SHIFT_MU = 0
 SHIFT_SIGMA = 3
+MAX_ZOOM = 1.2
+ZOOM_P = 0.75
+
+
+class RealZoomTransform(AbstractTransform, ABC):
+    def __init__(self, max_zoom, p_per_sample):
+        assert max_zoom > 1
+        self.max_zoom = max_zoom
+        self.p_per_sample = p_per_sample
+
+    def __call__(self, **data_dict):
+        data = data_dict["data"]
+        size = np.array(data.shape[-3:], dtype=int)
+        zoom = 1 + (np.random.random() * (self.max_zoom - 1))
+        samples = []
+        for sample in np.split(data, data.shape[0], 0):
+            if np.random.random() < self.p_per_sample:
+                sample = crop(sample, crop_size=(size / zoom).astype(int), crop_type="random")[0]
+                sample = augment_resize(sample.squeeze(0), sample_seg=None, target_size=size.tolist())[0]
+            else:
+                sample = sample.squeeze(0)
+            samples.append(sample)
+        data = np.stack(samples)
+        data_dict["data"] = data
+        return data_dict
 
 
 def get_transforms():
@@ -30,5 +60,9 @@ def get_transforms():
             shift_sigma=SHIFT_SIGMA,
             p_per_sample=SHIFT_P,
             p_per_channel=1
+        ),
+        RealZoomTransform(
+            max_zoom=MAX_ZOOM,
+            p_per_sample=ZOOM_P
         )
     ]
