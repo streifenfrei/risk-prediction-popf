@@ -170,14 +170,14 @@ def _update_intensity_range(ir, data, masked=False):
 
 
 def normalize(data, intensity_range, normalization_range):
-    data_np = np.array(sitk.GetArrayFromImage(data))
+    data_np = np.array(sitk.GetArrayFromImage(data)) if isinstance(data, sitk.Image) else data
     data_np = np.clip(data_np, intensity_range[0], intensity_range[1])
     data_np -= intensity_range[0]
     data_np = data_np.astype(float)
     data_np /= intensity_range[1] - intensity_range[0]  # values are now between 0 and 1
     data_np *= normalization_range[1] - normalization_range[0]
     data_np += normalization_range[0]  # values are now in the normalization range
-    return _np_to_sitk(data_np, data)
+    return _np_to_sitk(data_np, data) if isinstance(data, sitk.Image) else data_np
 
 
 def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, crops=None):

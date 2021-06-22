@@ -13,9 +13,10 @@ from batchgenerators.dataloading import SlimDataLoaderBase, MultiThreadedAugment
 from batchgenerators.transforms import AbstractTransform, Compose
 
 from augmentation import get_transforms
+from scripts.dataset.preprocess_dataset import normalize, HOUNSFIELD_BOUNDARIES
 
 
-def scan_data_directory(data_directory, crop="none", blacklist=None):
+def scan_data_directory(data_directory, crop="none", normalized=True, blacklist=None):
     assert crop in ["full", "fixed", "roi", "seg", "roi_only", "roi_only_masked", "all"]
     if blacklist is None:
         blacklist = []
@@ -39,7 +40,8 @@ def scan_data_directory(data_directory, crop="none", blacklist=None):
             label = labels[patient_id]
 
             if crop != "all":
-                data_file = os.path.join(directory.path, f"{crop}.nrrd")
+                data_file = os.path.join(directory.path, f"{crop}.nrrd") if normalized else \
+                    os.path.join(directory.path, "raw", f"{crop}.nrrd")
                 segmentation_file = os.path.join(directory.path, "raw", "segmentation.seg.nrrd")
                 data.append((label, data_file, segmentation_file))
             else:
@@ -57,7 +59,8 @@ def get_dataset_from_config(config):
         crop = "roi_only_masked" if masked else "roi_only"
     else:
         raise ValueError(f"Invalid 'input_type': {config['input_type']}")
-    dataset = scan_data_directory(config["path"], crop=crop, blacklist=config["blacklist"])
+    normalized = not ("online_normalization" in config and config["online_normalization"])
+    dataset = scan_data_directory(config["path"], crop=crop, normalized=normalized, blacklist=config["blacklist"])
     if config["input_type"] == "sample" or config["input_type"] == "resize":
         input_shape = [*config[config["input_type"]]["size"], 1]
     else:
@@ -73,9 +76,10 @@ def visualize_data(data: np.ndarray):
         data = data[1, :, :, :, :]
     data = data.squeeze()
     for image in np.split(data, data.shape[-1], -1):
-        image = np.moveaxis(image, 0, 1)
-        plt.imshow(image)
-        plt.show()
+        if np.max(image) > 0:
+            image = np.moveaxis(image, 0, 1)
+            plt.imshow(image)
+            plt.show()
 
 
 class RNGContext:
@@ -104,6 +108,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
                  data,
                  batch_size,
                  mode=Mode.NORMAL,
+                 normalization_range=None,
                  vector_generator=None,
                  input_shape=None,
                  sample_count=1,
@@ -113,6 +118,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
         self._data = data
         self.mode = mode
+        self.normalization_range = normalization_range
         self.vector_generator = vector_generator
         self.input_shape = input_shape
         if self.mode == DataLoader.Mode.SAMPLE:
@@ -148,6 +154,8 @@ class DataLoader(SlimDataLoaderBase, ABC):
                 label, data_file, segmentation_file = self._data[index]
                 data_sitk = sitk.ReadImage(data_file)
                 data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
+                if self.normalization_range is not None:
+                    data_np = normalize(data_np, self.normalization_range, [0, 1])
                 vector_gen_args = {"input_shape_pre": data_np.shape[-3:]}
                 if self.mode == DataLoader.Mode.RESIZE:
                     data_np = augment_resize(data_np, None, self.input_shape)[0].squeeze(0)
@@ -169,11 +177,11 @@ class DataLoader(SlimDataLoaderBase, ABC):
         return batch
 
 
-def get_data_augmenter(data, batch_size=1, mode=DataLoader.Mode.NORMAL, vector_generator=None, input_shape=None,
-                       sample_count=1, transforms=None, threads=1, seed=None):
+def get_data_augmenter(data, batch_size=1, mode=DataLoader.Mode.NORMAL, normalization_range=None, vector_generator=None,
+                       input_shape=None, sample_count=1, transforms=None, threads=1, seed=None):
     transforms = [] if transforms is None else transforms
     threads = min(int(np.ceil(len(data) / batch_size)), threads)
-    loader = DataLoader(data=data, batch_size=batch_size, mode=mode,
+    loader = DataLoader(data=data, batch_size=batch_size, mode=mode, normalization_range=normalization_range,
                         vector_generator=vector_generator, input_shape=input_shape,
                         sample_count=sample_count, number_of_threads_in_multithreaded=threads, seed=seed)
     transforms = transforms + [PrepareForTF()]
@@ -238,10 +246,13 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape):
             vector_generator = get_resize_ratio
     else:
         raise ValueError(f"Invalid 'input_type': {config['input_type']}")
+    normalization_range = HOUNSFIELD_BOUNDARIES if ("online_normalization" in config and
+                                                    config["online_normalization"]) else None
     batch_size = _fit_batch_size(len(train_data) * sample_count, config["batch_size"])
     train_augmenter = get_data_augmenter(data=train_data,
                                          batch_size=batch_size,
                                          mode=mode,
+                                         normalization_range=normalization_range,
                                          vector_generator=vector_generator,
                                          input_shape=ct_shape[:-1],
                                          sample_count=sample_count,
@@ -256,6 +267,7 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape):
     val_augmenter = get_data_augmenter(data=validation_data,
                                        batch_size=batch_size,
                                        mode=mode,
+                                       normalization_range=normalization_range,
                                        vector_generator=vector_generator,
                                        input_shape=ct_shape[:-1],
                                        sample_count=sample_count,
