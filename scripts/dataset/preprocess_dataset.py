@@ -74,6 +74,7 @@ def get_segmentation_roi(segmentation):
 
 def resample(data, segmentation, new_size, new_spacing, interpolator):
     center = data.TransformContinuousIndexToPhysicalPoint([sz / 2.0 for sz in data.GetSize()])
+    new_spacing = [(n_sp if n_sp > 0 else o_sp) for o_sp, n_sp in zip(data.GetSpacing(), new_spacing)]
     new_origin = [c - c_index * n_spc for c, c_index, n_spc in zip(center, [sz / 2.0 for sz in new_size], new_spacing)]
     data = sitk.Resample(data, size=new_size,
                          outputOrigin=new_origin,
