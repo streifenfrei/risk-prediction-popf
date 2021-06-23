@@ -26,7 +26,8 @@ def get_model(ct_shape=None,
               vector_shape=None,
               first_conv_channel=16,
               dropout=0.3,
-              regularizer=None,
+              dense_regularizer=None,
+              conv_regularizer=None,
               volumetric=True):
     if ct_shape is None:
         ct_shape = (None, None, None, 1) if volumetric else (None, None, 1)
@@ -35,19 +36,19 @@ def get_model(ct_shape=None,
     ct = layers.Input(shape=ct_shape)
     inputs = [ct]
     x = convolutional_layer(filters=first_conv_channel, kernel_size=3, strides=2, activation="relu",
-                            input_shape=ct_shape)(ct)
+                            input_shape=ct_shape, kernel_regularizer=conv_regularizer)(ct)
     x = layers.BatchNormalization()(x)
 
-    x = residual_block(x, first_conv_channel, volumetric=volumetric)
-    x = residual_block(x, first_conv_channel, volumetric=volumetric)
-    x = residual_block(x, first_conv_channel, strides=2, volumetric=volumetric)
-    x = residual_block(x, first_conv_channel, volumetric=volumetric)
-    x = residual_block(x, 2 * first_conv_channel, strides=2, volumetric=volumetric)
-    x = residual_block(x, 2 * first_conv_channel, volumetric=volumetric)
-    x = residual_block(x, 4 * first_conv_channel, volumetric=volumetric)
-    x = residual_block(x, 4 * first_conv_channel, volumetric=volumetric)
+    x = residual_block(x, first_conv_channel, regularizer=conv_regularizer, volumetric=volumetric)
+    x = residual_block(x, first_conv_channel, regularizer=conv_regularizer, volumetric=volumetric)
+    x = residual_block(x, first_conv_channel, strides=2, regularizer=conv_regularizer, volumetric=volumetric)
+    x = residual_block(x, first_conv_channel, regularizer=conv_regularizer, volumetric=volumetric)
+    x = residual_block(x, 2 * first_conv_channel, strides=2, regularizer=conv_regularizer, volumetric=volumetric)
+    x = residual_block(x, 2 * first_conv_channel, regularizer=conv_regularizer, volumetric=volumetric)
+    x = residual_block(x, 4 * first_conv_channel, regularizer=conv_regularizer, volumetric=volumetric)
+    x = residual_block(x, 4 * first_conv_channel, regularizer=conv_regularizer, volumetric=volumetric)
 
     x = global_pooling_layer()(x)
     x = layers.Dropout(rate=dropout)(x)
-    x = layers.Dense(units=1, activation="sigmoid", kernel_regularizer=regularizer)(x)
+    x = layers.Dense(units=1, activation="sigmoid", kernel_regularizer=dense_regularizer)(x)
     return tf.keras.Model(inputs=inputs, outputs=x, name="ResNet")
