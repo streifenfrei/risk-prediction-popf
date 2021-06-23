@@ -148,7 +148,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
             minority = trues if len(trues) <= len(falses) else falses
             majority = random.sample(majority, len(minority))
             self._data = minority + majority
-
+        random.shuffle(self._data)
         self.batch_size = _fit_batch_size(len(self._data), self.batch_size)
         self._current_position = 0
         self.was_initialized = False
