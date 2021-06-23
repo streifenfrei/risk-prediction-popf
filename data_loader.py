@@ -1,5 +1,6 @@
 import csv
 import os
+import random
 from abc import ABC
 from enum import IntEnum
 
@@ -116,6 +117,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
                  batch_size,
                  volumetric=True,
                  mode=Mode.NORMAL,
+                 balance=False,
                  normalization_range=None,
                  vector_generator=None,
                  input_shape=None,
@@ -139,6 +141,14 @@ class DataLoader(SlimDataLoaderBase, ABC):
         self.input_shape = input_shape
         if self.mode == DataLoader.Mode.SAMPLE:
             self._data *= sample_count
+        if balance:
+            trues = list(x for x in self._data if x[0] == 1)
+            falses = list(set(self._data) - set(trues))
+            majority = trues if len(trues) > len(falses) else falses
+            minority = trues if len(trues) <= len(falses) else falses
+            majority = random.sample(majority, len(minority))
+            self._data = minority + majority
+
         self.batch_size = _fit_batch_size(len(self._data), self.batch_size)
         self._current_position = 0
         self.was_initialized = False
@@ -182,7 +192,6 @@ class DataLoader(SlimDataLoaderBase, ABC):
                     loaded_cts[data_file] = data_np
                 if slice is not None:
                     data_np = data_np[:, :, :, slice]
-                    visualize_data(data_np)
                 vector_gen_args = {"input_shape_pre": data_np.shape[-3:]}
                 if self.mode == DataLoader.Mode.RESIZE:
                     data_np = augment_resize(data_np, None, self.input_shape)[0].squeeze(0)
@@ -207,6 +216,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
 def get_data_augmenter(data, batch_size=1,
                        mode=DataLoader.Mode.NORMAL,
                        volumetric=True,
+                       balance=False,
                        normalization_range=None,
                        vector_generator=None,
                        input_shape=None,
@@ -219,6 +229,7 @@ def get_data_augmenter(data, batch_size=1,
     loader = DataLoader(data=data,
                         batch_size=batch_size,
                         mode=mode,
+                        balance=balance,
                         volumetric=volumetric,
                         normalization_range=normalization_range,
                         vector_generator=vector_generator,
@@ -270,8 +281,7 @@ def get_resize_ratio(**kwargs):
 
 
 def get_data_loader_from_config(train_data, validation_data, config, ct_shape, volumetric=True):
-    if "data" in config:
-        config = config["data"]
+    config = config.get("data", config)
     input_type = config["input_type"]
     sample_count = 1
     vector_shape = None
@@ -290,9 +300,11 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape, v
         raise ValueError(f"Invalid 'input_type': {config['input_type']}")
     normalization_range = HOUNSFIELD_BOUNDARIES if ("online_normalization" in config and
                                                     config["online_normalization"]) else None
+    balance = config.get("balance", False)
     train_augmenter = get_data_augmenter(data=train_data,
                                          batch_size=config["batch_size"],
                                          mode=mode,
+                                         balance=balance,
                                          volumetric=volumetric,
                                          normalization_range=normalization_range,
                                          vector_generator=vector_generator,
@@ -308,6 +320,7 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape, v
     val_augmenter = get_data_augmenter(data=validation_data,
                                        batch_size=config["batch_size"],
                                        mode=mode,
+                                       balance=balance,
                                        volumetric=volumetric,
                                        normalization_range=normalization_range,
                                        vector_generator=vector_generator,
