@@ -93,11 +93,22 @@ def resample(data, segmentation, new_size, new_spacing, interpolator):
 
 
 def fit_roi(size, aspect_ratio):
-    for dim in range(len(size)):
-        new_size = np.zeros(3, dtype=int)
-        new_size[dim] = size[dim]
-        new_size[(dim + 1) % 3] = np.ceil(size[dim] * aspect_ratio[(dim + 1) % 3] / aspect_ratio[dim])
-        new_size[(dim + 2) % 3] = np.ceil(size[dim] * aspect_ratio[(dim + 2) % 3] / aspect_ratio[dim])
+    if np.count_nonzero(np.array(aspect_ratio) > 0) <= 1:
+        return size
+    dims = len(size)
+
+    def get_size_at_dim(base_dim, current_dim):
+        if aspect_ratio[current_dim] > 0:
+            return np.ceil(size[base_dim] * aspect_ratio[current_dim % 3] / aspect_ratio[base_dim])
+        else:
+            return size[current_dim]
+
+    for dim in range(dims):
+        if aspect_ratio[dim] <= 0:
+            continue
+        new_size = np.zeros(dims, dtype=int)
+        for i in range(dims):
+            new_size[(dim + i) % dims] = get_size_at_dim(dim, (dim + i) % dims)
         if not any(n_sz < o_sz for o_sz, n_sz in zip(size, new_size)):
             return new_size
     raise ValueError("It's impossible to get here.")
