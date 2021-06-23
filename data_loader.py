@@ -49,7 +49,7 @@ def scan_data_directory(data_directory, crop="none", normalized=True, blacklist=
     return data
 
 
-def get_dataset_from_config(config):
+def get_dataset_from_config(config, volumetric=True):
     if "data" in config:
         config = config["data"]
     masked = config["masked"]
@@ -63,8 +63,10 @@ def get_dataset_from_config(config):
     dataset = scan_data_directory(config["path"], crop=crop, normalized=normalized, blacklist=config["blacklist"])
     if config["input_type"] == "sample" or config["input_type"] == "resize":
         input_shape = [*config[config["input_type"]]["size"], 1]
+        if not volumetric and len(input_shape) == 4:
+            input_shape = [*input_shape[:2], 1]
     else:
-        dummy_loader = get_data_augmenter(dataset[:1])
+        dummy_loader = get_data_augmenter(dataset[:1], volumetric=volumetric)
         input_shape = next(dummy_loader)[0].shape[-4:]
         dummy_loader._finish()
     return dataset, input_shape
@@ -75,11 +77,16 @@ def visualize_data(data: np.ndarray):
     if data.ndim == 5:
         data = data[1, :, :, :, :]
     data = data.squeeze()
-    for image in np.split(data, data.shape[-1], -1):
-        if np.max(image) > 0:
-            image = np.moveaxis(image, 0, 1)
-            plt.imshow(image)
-            plt.show()
+    if len(data.shape) == 3:
+        for image in np.split(data, data.shape[-1], -1):
+            if np.max(image) > 0:
+                image = np.moveaxis(image, 0, 1)
+                plt.imshow(image)
+                plt.show()
+    else:
+        image = np.moveaxis(data, 0, 1)
+        plt.imshow(image)
+        plt.show()
 
 
 class RNGContext:
@@ -107,6 +114,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
     def __init__(self,
                  data,
                  batch_size,
+                 volumetric=True,
                  mode=Mode.NORMAL,
                  normalization_range=None,
                  vector_generator=None,
@@ -116,13 +124,22 @@ class DataLoader(SlimDataLoaderBase, ABC):
                  epochs=1,
                  seed=None):
         super().__init__(None, batch_size, number_of_threads_in_multithreaded)
-        self._data = data
+        self.volumetric = volumetric
+        if not self.volumetric:
+            self._data = []
+            for label, ct, seg in data:
+                slices = sitk.ReadImage(ct).GetSize()[2]
+                for i in range(slices):
+                    self._data.append((label, (ct, i), seg))
+        else:
+            self._data = data
         self.mode = mode
         self.normalization_range = normalization_range
         self.vector_generator = vector_generator
         self.input_shape = input_shape
         if self.mode == DataLoader.Mode.SAMPLE:
             self._data *= sample_count
+        self.batch_size = _fit_batch_size(len(self._data), self.batch_size)
         self._current_position = 0
         self.was_initialized = False
         self.epochs = epochs
@@ -148,14 +165,24 @@ class DataLoader(SlimDataLoaderBase, ABC):
         data_batch = []
         vector_batch = None if self.vector_generator is None else []
         label_batch = []
+        loaded_cts = {}
         for i in range(self.batch_size):
             index = self._current_position + i
             if index < len(self._data):
-                label, data_file, segmentation_file = self._data[index]
-                data_sitk = sitk.ReadImage(data_file)
-                data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
-                if self.normalization_range is not None:
-                    data_np = normalize(data_np, self.normalization_range, [0, 1])
+                label, data, segmentation_file = self._data[index]
+                data_file = data if self.volumetric else data[0]
+                slice = None if self.volumetric else data[1]
+                if data_file in loaded_cts:
+                    data_np = loaded_cts[data_file]
+                else:
+                    data_sitk = sitk.ReadImage(data_file)
+                    data_np = np.expand_dims(sitk.GetArrayFromImage(data_sitk).transpose(), axis=0)
+                    if self.normalization_range is not None:
+                        data_np = normalize(data_np, self.normalization_range, [0, 1])
+                    loaded_cts[data_file] = data_np
+                if slice is not None:
+                    data_np = data_np[:, :, :, slice]
+                    visualize_data(data_np)
                 vector_gen_args = {"input_shape_pre": data_np.shape[-3:]}
                 if self.mode == DataLoader.Mode.RESIZE:
                     data_np = augment_resize(data_np, None, self.input_shape)[0].squeeze(0)
@@ -177,13 +204,28 @@ class DataLoader(SlimDataLoaderBase, ABC):
         return batch
 
 
-def get_data_augmenter(data, batch_size=1, mode=DataLoader.Mode.NORMAL, normalization_range=None, vector_generator=None,
-                       input_shape=None, sample_count=1, transforms=None, threads=1, seed=None):
+def get_data_augmenter(data, batch_size=1,
+                       mode=DataLoader.Mode.NORMAL,
+                       volumetric=True,
+                       normalization_range=None,
+                       vector_generator=None,
+                       input_shape=None,
+                       sample_count=1,
+                       transforms=None,
+                       threads=1,
+                       seed=None):
     transforms = [] if transforms is None else transforms
     threads = min(int(np.ceil(len(data) / batch_size)), threads)
-    loader = DataLoader(data=data, batch_size=batch_size, mode=mode, normalization_range=normalization_range,
-                        vector_generator=vector_generator, input_shape=input_shape,
-                        sample_count=sample_count, number_of_threads_in_multithreaded=threads, seed=seed)
+    loader = DataLoader(data=data,
+                        batch_size=batch_size,
+                        mode=mode,
+                        volumetric=volumetric,
+                        normalization_range=normalization_range,
+                        vector_generator=vector_generator,
+                        input_shape=input_shape,
+                        sample_count=sample_count,
+                        number_of_threads_in_multithreaded=threads,
+                        seed=seed)
     transforms = transforms + [PrepareForTF()]
     return MultiThreadedAugmenter(loader, Compose(transforms), threads)
 
@@ -227,7 +269,7 @@ def get_resize_ratio(**kwargs):
     return pre / post
 
 
-def get_data_loader_from_config(train_data, validation_data, config, ct_shape):
+def get_data_loader_from_config(train_data, validation_data, config, ct_shape, volumetric=True):
     if "data" in config:
         config = config["data"]
     input_type = config["input_type"]
@@ -248,10 +290,10 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape):
         raise ValueError(f"Invalid 'input_type': {config['input_type']}")
     normalization_range = HOUNSFIELD_BOUNDARIES if ("online_normalization" in config and
                                                     config["online_normalization"]) else None
-    batch_size = _fit_batch_size(len(train_data) * sample_count, config["batch_size"])
     train_augmenter = get_data_augmenter(data=train_data,
-                                         batch_size=batch_size,
+                                         batch_size=config["batch_size"],
                                          mode=mode,
+                                         volumetric=volumetric,
                                          normalization_range=normalization_range,
                                          vector_generator=vector_generator,
                                          input_shape=ct_shape[:-1],
@@ -263,10 +305,10 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape):
         input_shape.append(vector_shape)
     train_dl = get_tf_dataset(train_augmenter, input_shape)
     #   cache validation data
-    batch_size = _fit_batch_size(len(validation_data) * sample_count, config["batch_size"])
     val_augmenter = get_data_augmenter(data=validation_data,
-                                       batch_size=batch_size,
+                                       batch_size=config["batch_size"],
                                        mode=mode,
+                                       volumetric=volumetric,
                                        normalization_range=normalization_range,
                                        vector_generator=vector_generator,
                                        input_shape=ct_shape[:-1],

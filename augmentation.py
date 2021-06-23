@@ -24,7 +24,8 @@ class RealZoomTransform(AbstractTransform, ABC):
 
     def __call__(self, **data_dict):
         data = data_dict["data"]
-        size = np.array(data.shape[-3:], dtype=int)
+        dimensionality = len(data.shape) - 2
+        size = np.array(data.shape[-dimensionality:], dtype=int)
         zoom = 1 + (np.random.random() * (self.max_zoom - 1))
         samples = []
         for sample in np.split(data, data.shape[0], 0):

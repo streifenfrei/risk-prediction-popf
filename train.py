@@ -19,7 +19,7 @@ model_mapping = {
 }
 
 
-def load_model(model_string, input_shape, extra_options=None):
+def load_model(model_string, volumetric, input_shape, extra_options=None):
     if extra_options is None:
         extra_options = {}
     if isinstance(input_shape, list) or isinstance(input_shape, tuple):
@@ -31,7 +31,8 @@ def load_model(model_string, input_shape, extra_options=None):
     else:
         ct_shape = input_shape
         vector_shape = None
-    return model_mapping[model_string](ct_shape=ct_shape, vector_shape=vector_shape, **extra_options)
+    return model_mapping[model_string](ct_shape=ct_shape, vector_shape=vector_shape,
+                                       volumetric=volumetric, **extra_options)
 
 
 def train_model(config,
@@ -43,10 +44,17 @@ def train_model(config,
     # initialize data loader
     config_training = config["training"]
     config_data = config["data"]
-    train_dl, val_dl, input_shape = get_data_loader_from_config(train_data, validation_data, config_data, ct_shape)
+    volumetric = config.get("3D", True)
+    if not volumetric and len(ct_shape) == 4:
+        ct_shape = (*ct_shape[:2], 1)
+    train_dl, val_dl, input_shape = get_data_loader_from_config(train_data,
+                                                                validation_data,
+                                                                config_data,
+                                                                ct_shape,
+                                                                volumetric=volumetric)
     # initialize model
     extra_options = config.get("model_extra_options", None)
-    model = load_model(config["model"], input_shape, extra_options)
+    model = load_model(config["model"], volumetric, input_shape, extra_options)
     model.compile(optimizer=config_training["optimizer"],
                   loss=tf.losses.BinaryCrossentropy(),
                   metrics=["AUC"])
@@ -101,8 +109,9 @@ def get_history_from_tb(directory):
 def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
     config_training = config["training"]
+    volumetric = config.get("3D", True)
     config_data = config["data"]
-    dataset, ct_shape = get_dataset_from_config(config_data)
+    dataset, ct_shape = get_dataset_from_config(config_data, volumetric=volumetric)
 
     # cross validation
     if config_training["folds"] >= 2:
