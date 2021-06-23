@@ -57,7 +57,7 @@ def train_model(config,
     model = load_model(config["model"], volumetric, input_shape, extra_options)
     model.compile(optimizer=config_training["optimizer"],
                   loss=config_training.get("loss", "binary_crossentropy"),
-                  metrics=["AUC"])
+                  metrics=["AUC", "accuracy"])
     callbacks = []
     initial_epoch = 0
     if checkpoint_dir is not None:
