@@ -181,14 +181,20 @@ def _update_intensity_range(ir, data, masked=False):
     return ir
 
 
-def normalize(data, intensity_range, normalization_range):
+def normalize(data, intensity_range, normalization_range, z_standardization=False):
     data_np = np.array(sitk.GetArrayFromImage(data)) if isinstance(data, sitk.Image) else data
+    if z_standardization:
+        mean = data_np.mean()
+        std = data_np.std()
+        data_np = (data_np - mean) / std
+        intensity_range = ((np.array(intensity_range) - mean) / std).astype(int)
     data_np = np.clip(data_np, intensity_range[0], intensity_range[1])
     data_np -= intensity_range[0]
     data_np = data_np.astype(float)
     data_np /= intensity_range[1] - intensity_range[0]  # values are now between 0 and 1
     data_np *= normalization_range[1] - normalization_range[0]
     data_np += normalization_range[0]  # values are now in the normalization range
+
     return _np_to_sitk(data_np, data) if isinstance(data, sitk.Image) else data_np
 
 
@@ -212,6 +218,7 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             if config["normalization"][f"ir_{crop}"] == "auto" \
             else [config["normalization"][f"ir_{crop}"], False]
     normalization_range = config["normalization"]["target_range"]
+    z_standardization = config["normalization"]["z_standardization"]
     labels_file = config["labels"]
     roi_margin = np.array(config["cropping"]["roi_margin"])
     roi_aspect_ratio = config["cropping"]["roi_aspect_ratio"] if "roi_aspect_ratio" in config["cropping"] else None
@@ -301,15 +308,18 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             output_directory = os.path.join(out, str(patient_id))
             for crop in crops:
                 input_path = os.path.join(raw_directory, f"{crop}.nrrd")
-                sitk.WriteImage(normalize(sitk.ReadImage(input_path), intensity_ranges[crop][0], normalization_range),
+                sitk.WriteImage(normalize(sitk.ReadImage(input_path), intensity_ranges[crop][0],
+                                          normalization_range, z_standardization=z_standardization),
                                 os.path.join(output_directory, f"{crop}.nrrd"))
             if "roi" in crops:
                 roi_only = sitk.ReadImage(os.path.join(raw_directory, "roi_only.nrrd"))
-                sitk.WriteImage(normalize(roi_only, intensity_ranges["roi"][0], normalization_range),
+                sitk.WriteImage(normalize(roi_only, intensity_ranges["roi"][0],
+                                          normalization_range, z_standardization=z_standardization),
                                 os.path.join(output_directory, "roi_only.nrrd"))
             if "seg" in crops:
                 roi_only_masked = sitk.ReadImage(os.path.join(raw_directory, "roi_only_masked.nrrd"))
-                sitk.WriteImage(normalize(roi_only_masked, intensity_ranges["seg"][0], normalization_range),
+                sitk.WriteImage(normalize(roi_only_masked, intensity_ranges["seg"][0],
+                                          normalization_range, z_standardization=z_standardization),
                                 os.path.join(output_directory, "roi_only_masked.nrrd"))
             print(f"\rNormalizing: {i + 1}/{len(dataset)}", end="")
 
