@@ -309,7 +309,7 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape, v
                                          normalization_range=normalization_range,
                                          vector_generator=vector_generator,
                                          input_shape=ct_shape[:-1],
-                                         sample_count=sample_count,
+                                         sample_count=1,
                                          transforms=get_transforms(),
                                          threads=config["loader_threads"])
     input_shape = [ct_shape]
