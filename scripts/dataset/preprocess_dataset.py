@@ -8,9 +8,9 @@ import SimpleITK as sitk
 import yaml
 import numpy as np
 
-PATIENT_ID_PATTERN = "UKD_{id}$"
-DATA_FILE_PATTERN = "CT/NRRD/CT_{id}.nrrd"
-SEGMENTATION_FILE_PATTERN = "RoI/combined.nrrd"
+PATIENT_ID_PATTERN = "UKD_{id}$"                # pattern of the root directory of one patient
+DATA_FILE_PATTERN = "CT/NRRD/CT_{id}.nrrd"      # pattern of the CT (.nrrd file) relative to above root dir
+SEGMENTATION_FILE_PATTERN = "RoI/combined.nrrd" # pattern of the segmentation (.nrrd file) relative to above root dir
 
 LABELS = ["full", "fixed", "roi", "seg"]
 MASKING_VALUE = -2000  # just has to be smaller than lower hounsfield boundary
