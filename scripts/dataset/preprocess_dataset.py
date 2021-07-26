@@ -187,11 +187,13 @@ def normalize(data, intensity_range, normalization_range, z_standardization=Fals
         mean = data_np.mean()
         std = data_np.std()
         data_np = (data_np - mean) / std
-        intensity_range = ((np.array(intensity_range) - mean) / std).astype(int)
-    data_np = np.clip(data_np, intensity_range[0], intensity_range[1])
-    data_np -= intensity_range[0]
-    data_np = data_np.astype(float)
-    data_np /= intensity_range[1] - intensity_range[0]  # values are now between 0 and 1
+        data_np = np.clip(data_np, -1, 1)
+        data_np = (data_np + 1) / 2
+    else:
+        data_np = np.clip(data_np, intensity_range[0], intensity_range[1])
+        data_np -= intensity_range[0]
+        data_np = data_np.astype(float)
+        data_np /= intensity_range[1] - intensity_range[0]  # values are now between 0 and 1
     data_np *= normalization_range[1] - normalization_range[0]
     data_np += normalization_range[0]  # values are now in the normalization range
 
