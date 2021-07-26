@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
-from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE
+from scripts.dataset.preprocess_dataset import HOUNSFIELD_BOUNDARIES, HOUNSFIELD_RANGE, LABELS
 
 
 def _get_mean_of_histo(histogram):
@@ -34,11 +34,11 @@ def visualize_histograms(histograms, coverage, ids, labels):
 
     rows = int(np.ceil(len(histograms) / 2))
     fig, axs = plt.subplots(rows, 2, constrained_layout=True)
-    for i, (histogram, label) in enumerate(zip(histograms, LABELS)):
+    for i, (histogram, label) in enumerate(zip(histograms, labels)):
         histogram, cutoff_left, cutoff_right = crop_histogram(histogram.astype(np.float) / np.sum(histogram), coverage)
         row = int(i / 2)
         col = i % 2
-        axis = axs[row][col] if row > 1 else axs[col]
+        axis = axs[row][col] if rows > 1 else axs[col]
         lower_boundary = HOUNSFIELD_BOUNDARIES[0] + cutoff_left
         upper_boundary = HOUNSFIELD_BOUNDARIES[1] - cutoff_right
         axis.fill_between(np.arange(lower_boundary, upper_boundary), histogram)
@@ -55,7 +55,7 @@ def visualize_histograms(histograms, coverage, ids, labels):
     for i, (mean, label) in enumerate(zip(means, labels)):
         row = int(i / 2)
         col = i % 2
-        axis = axs[row][col] if row > 1 else axs[col]
+        axis = axs[row][col] if rows > 1 else axs[col]
         axis.bar(ids, mean)
         axis.set_title(label)
     plt.show()
@@ -159,7 +159,7 @@ def main(file, hist_coverage, f_beta):
 if __name__ == '__main__':
     arg_parser = ArgumentParser()
     arg_parser.add_argument("--file", "-f", type=str, required=True)
-    arg_parser.add_argument("--hist_coverage", "-hc", type=float, default=0.98)
+    arg_parser.add_argument("--hist_coverage", "-hc", type=float, default=0.99)
     arg_parser.add_argument("--f_beta", "-fb", type=float, default=2.35)
     args = arg_parser.parse_args()
     main(args.file, args.hist_coverage, args.f_beta)
