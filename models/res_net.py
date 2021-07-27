@@ -9,17 +9,20 @@ def residual_block(x, filters, strides=1, regularizer=None, volumetric=True):
     skip = convolutional_layer(filters=filters, kernel_size=3, strides=strides, activation="relu", padding="same",
                                kernel_regularizer=regularizer)(x)
     skip = layers.BatchNormalization()(skip)
-
-    x = convolutional_layer(filters=filters, kernel_size=3, strides=strides, activation="relu", padding="same",
-                            kernel_regularizer=regularizer)(x)
-    x = layers.BatchNormalization()(x)
-    x = convolutional_layer(filters=filters, kernel_size=3, padding="same", kernel_regularizer=regularizer)(x)
-    x = layers.BatchNormalization()(x)
-
+    x = residual_block_internal(x, filters, strides, regularizer, volumetric)
     x = tf.add(skip, x)
     x = keras.activations.relu(x)
     x = layers.BatchNormalization()(x)
     return x
+
+
+def residual_block_internal(x, filters, strides=1, regularizer=None, volumetric=True):
+    convolutional_layer = layers.Conv3D if volumetric else layers.Conv2D
+    x = convolutional_layer(filters=filters, kernel_size=3, strides=strides, activation="relu", padding="same",
+                            kernel_regularizer=regularizer)(x)
+    x = layers.BatchNormalization()(x)
+    x = convolutional_layer(filters=filters, kernel_size=3, padding="same", kernel_regularizer=regularizer)(x)
+    return layers.BatchNormalization()(x)
 
 
 def get_model(ct_shape=None,

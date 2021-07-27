@@ -73,7 +73,7 @@ def get_dataset_from_config(config, volumetric=True):
     return dataset, input_shape
 
 
-def visualize_data(data: np.ndarray):
+def visualize_data(data: np.ndarray, title=""):
     import matplotlib.pyplot as plt
     if data.ndim == 5:
         data = data[1, :, :, :, :]
@@ -82,10 +82,12 @@ def visualize_data(data: np.ndarray):
         for image in np.split(data, data.shape[-1], -1):
             if np.max(image) > 0:
                 image = np.moveaxis(image, 0, 1)
+                plt.title(title)
                 plt.imshow(image)
                 plt.show()
     else:
         image = np.moveaxis(data, 0, 1)
+        plt.title(title)
         plt.imshow(image)
         plt.show()
 
@@ -118,6 +120,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
                  volumetric=True,
                  mode=Mode.NORMAL,
                  balance=False,
+                 include_segmentation=False,
                  normalization_range=None,
                  vector_generator=None,
                  input_shape=None,
@@ -136,6 +139,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
         else:
             self._data = data
         self.mode = mode
+        self.include_segmentation = include_segmentation
         self.normalization_range = normalization_range
         self.vector_generator = vector_generator
         self.input_shape = input_shape
@@ -173,9 +177,11 @@ class DataLoader(SlimDataLoaderBase, ABC):
             if 0 < self.epochs <= self._current_epoch:
                 raise StopIteration
         data_batch = []
+        seg_batch = []
         vector_batch = None if self.vector_generator is None else []
         label_batch = []
         loaded_cts = {}
+        loaded_segs = {}
         for i in range(self.batch_size):
             index = self._current_position + i
             if index < len(self._data):
@@ -192,23 +198,43 @@ class DataLoader(SlimDataLoaderBase, ABC):
                     loaded_cts[data_file] = data_np
                 if slice is not None:
                     data_np = data_np[:, :, :, slice]
+                seg = None
+                if self.include_segmentation:
+                    if segmentation_file in loaded_segs:
+                        seg = loaded_segs[segmentation_file]
+                    else:
+                        seg_sitk = sitk.ReadImage(segmentation_file)
+                        origin = seg_sitk.TransformPhysicalPointToIndex(data_sitk.GetOrigin())
+                        size = data_sitk.GetSize()
+                        seg_sitk = seg_sitk[origin[0]:origin[0] + size[0],
+                                   origin[1]:origin[1] + size[1],
+                                   origin[2]:origin[2] + size[2]]
+                        seg = np.expand_dims(sitk.GetArrayFromImage(seg_sitk).transpose(), axis=0)
+                        loaded_segs[segmentation_file] = seg
                 vector_gen_args = {"input_shape_pre": data_np.shape[-3:]}
                 if self.mode == DataLoader.Mode.RESIZE:
-                    data_np = augment_resize(data_np, None, self.input_shape)[0].squeeze(0)
-                    data_np = np.expand_dims(data_np, 0)
+                    data_np, seg = augment_resize(data_np, seg, self.input_shape)
                     vector_gen_args["input_shape_post"] = self.input_shape
                 elif self.mode == DataLoader.Mode.SAMPLE:
                     data_np = np.expand_dims(data_np, 0)
+                    seg = np.expand_dims(seg, 0)
                     with RNGContext(self.seed):
-                        data_np = random_crop(data_np, crop_size=self.input_shape)[0].squeeze(0)
+                        data_np, seg = random_crop(data_np, seg=seg, crop_size=self.input_shape)
+                        data_np = np.squeeze(data_np, 0)
+                        seg = np.squeeze(seg, 0)
                     vector_gen_args["input_shape_post"] = self.input_shape
                 if self.vector_generator is not None:
                     vector_batch.append(self.vector_generator(**vector_gen_args))
                 data_batch.append(data_np)
+                seg_batch.append(seg)
+
                 label_batch.append(label)
         batch = {"data": np.stack(data_batch),
-                 "vector": None if vector_batch is None else np.stack(vector_batch),
                  "label": np.stack(label_batch)}
+        if vector_batch is not None:
+            batch["vector"] = np.stack(vector_batch)
+        if self.include_segmentation:
+            batch["seg"] = np.stack(seg_batch)
         self._current_position += self.number_of_threads_in_multithreaded * self.batch_size
         return batch
 
@@ -217,6 +243,7 @@ def get_data_augmenter(data, batch_size=1,
                        mode=DataLoader.Mode.NORMAL,
                        volumetric=True,
                        balance=False,
+                       include_segmentation=False,
                        normalization_range=None,
                        vector_generator=None,
                        input_shape=None,
@@ -231,6 +258,7 @@ def get_data_augmenter(data, batch_size=1,
                         mode=mode,
                         balance=balance,
                         volumetric=volumetric,
+                        include_segmentation=include_segmentation,
                         normalization_range=normalization_range,
                         vector_generator=vector_generator,
                         input_shape=input_shape,
@@ -241,7 +269,7 @@ def get_data_augmenter(data, batch_size=1,
     return MultiThreadedAugmenter(loader, Compose(transforms), threads)
 
 
-def get_tf_dataset(augmenter, input_shapes):
+def get_tf_dataset(augmenter, input_shapes, output_shapes):
     batch_size = augmenter.generator.batch_size
 
     def generator():
@@ -250,10 +278,9 @@ def get_tf_dataset(augmenter, input_shapes):
             yield batch
         augmenter._finish()
 
-    input_signatures = tuple([tf.TensorSpec(shape=(None, *shape), dtype=tf.float32) for shape in input_shapes])
-    tf_dataset = tf.data.Dataset.from_generator(generator, output_signature=(
-        input_signatures,
-        tf.TensorSpec(shape=batch_size, dtype=tf.int32)))
+    input_signatures = tuple([tf.TensorSpec(shape=(batch_size, *shape), dtype=tf.float32) for shape in input_shapes])
+    output_signatures = tuple([tf.TensorSpec(shape=(batch_size, *shape), dtype=tf.float32) for shape in output_shapes])
+    tf_dataset = tf.data.Dataset.from_generator(generator, output_signature=(input_signatures, output_signatures))
     return tf_dataset
 
 
@@ -263,9 +290,13 @@ class PrepareForTF(AbstractTransform, ABC):
         data = np.moveaxis(data, 1, -1)
         label = data_dict["label"]
         inputs = [tf.convert_to_tensor(data, dtype=tf.float32)]
-        if data_dict["vector"] is not None:
+        outputs = [tf.convert_to_tensor(label, dtype=tf.int32)]
+        if "seg" in data_dict:
+            seg = np.moveaxis(data_dict["seg"], 1, -1)
+            outputs.append(tf.convert_to_tensor(seg, dtype=tf.float32))
+        if "vector" in data_dict:
             inputs.append(tf.convert_to_tensor(data_dict["vector"], dtype=tf.float32))
-        return tuple(inputs), tf.convert_to_tensor(label, dtype=tf.int32)
+        return tuple(inputs), tuple(outputs)
 
 
 def _fit_batch_size(data_count, max_batch_size):
@@ -280,7 +311,8 @@ def get_resize_ratio(**kwargs):
     return pre / post
 
 
-def get_data_loader_from_config(train_data, validation_data, config, ct_shape, volumetric=True):
+def get_data_loader_from_config(train_data, validation_data, config, ct_shape, volumetric=True,
+                                include_segmentation=False):
     config = config.get("data", config)
     input_type = config["input_type"]
     sample_count = 1
@@ -306,6 +338,7 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape, v
                                          mode=mode,
                                          balance=balance,
                                          volumetric=volumetric,
+                                         include_segmentation=include_segmentation,
                                          normalization_range=normalization_range,
                                          vector_generator=vector_generator,
                                          input_shape=ct_shape[:-1],
@@ -313,19 +346,23 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape, v
                                          transforms=get_transforms(),
                                          threads=config["loader_threads"])
     input_shape = [ct_shape]
+    output_shape = [[]]
+    if include_segmentation:
+        output_shape.append(ct_shape)
     if vector_shape is not None:
         input_shape.append(vector_shape)
-    train_dl = get_tf_dataset(train_augmenter, input_shape)
+    train_dl = get_tf_dataset(train_augmenter, input_shape, output_shape)
     #   cache validation data
     val_augmenter = get_data_augmenter(data=validation_data,
                                        batch_size=config["batch_size"],
                                        mode=mode,
                                        balance=balance,
                                        volumetric=volumetric,
+                                       include_segmentation=include_segmentation,
                                        normalization_range=normalization_range,
                                        vector_generator=vector_generator,
                                        input_shape=ct_shape[:-1],
                                        sample_count=sample_count,
                                        seed=42)
-    val_dl = get_tf_dataset(val_augmenter, input_shape)
+    val_dl = get_tf_dataset(val_augmenter, input_shape, output_shape)
     return train_dl, val_dl, input_shape

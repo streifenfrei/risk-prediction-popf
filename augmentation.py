@@ -24,19 +24,31 @@ class RealZoomTransform(AbstractTransform, ABC):
 
     def __call__(self, **data_dict):
         data = data_dict["data"]
+        seg = data_dict.get("seg", None)
         dimensionality = len(data.shape) - 2
         size = np.array(data.shape[-dimensionality:], dtype=int)
         zoom = 1 + (np.random.random() * (self.max_zoom - 1))
         samples = []
-        for sample in np.split(data, data.shape[0], 0):
+        segs = []
+        split_data = np.split(data, data.shape[0], 0)
+        split_seg = np.split(seg, seg.shape[0], 0) if seg is not None else None
+        for i in range(len(split_data)):
+            sample = split_data[i]
+            seg = split_seg[i] if split_seg is not None else None
             if np.random.random() < self.p_per_sample:
-                sample = crop(sample, crop_size=(size / zoom).astype(int), crop_type="random")[0]
-                sample = augment_resize(sample.squeeze(0), sample_seg=None, target_size=size.tolist())[0]
+                sample, seg = crop(sample, seg=seg, crop_size=(size / zoom).astype(int), crop_type="random")
+                sample, seg = augment_resize(sample.squeeze(0), sample_seg=seg.squeeze(0), target_size=size.tolist())
             else:
                 sample = sample.squeeze(0)
+                if seg is not None:
+                    seg = seg.squeeze(0)
             samples.append(sample)
+            segs.append(seg)
         data = np.stack(samples)
         data_dict["data"] = data
+        if seg is not None:
+            segs = np.stack(segs)
+            data_dict["seg"] = segs
         return data_dict
 
 

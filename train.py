@@ -6,13 +6,14 @@ import tensorflow as tf
 import yaml
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
-from models import simple_net, res_net, squeeze_net, lombardo
+from models import *
 from data_loader import get_dataset_from_config, get_data_loader_from_config
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_mapping = {
     "simplenet": simple_net.get_model,
     "resnet": res_net.get_model,
+    "resnet_att": res_net_attention.get_model,
     "lombardo": lombardo.get_model,
     "squeezenet": squeeze_net.get_model,
     "custom": None
@@ -47,11 +48,13 @@ def train_model(config,
     volumetric = config.get("3D", True)
     if not volumetric and len(ct_shape) == 4:
         ct_shape = (*ct_shape[:2], 1)
+    include_segmentation = config["model"] == "resnet_att"
     train_dl, val_dl, input_shape = get_data_loader_from_config(train_data,
                                                                 validation_data,
                                                                 config_data,
                                                                 ct_shape,
-                                                                volumetric=volumetric)
+                                                                volumetric=volumetric,
+                                                                include_segmentation=include_segmentation)
     # initialize model
     extra_options = config.get("model_extra_options", None)
     model = load_model(config["model"], volumetric, input_shape, extra_options)
