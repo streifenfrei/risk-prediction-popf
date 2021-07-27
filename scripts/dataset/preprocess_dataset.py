@@ -81,11 +81,10 @@ def resample(data, segmentation, new_size, new_spacing, interpolator):
                          outputSpacing=new_spacing,
                          interpolator=interpolator,
                          defaultPixelValue=HOUNSFIELD_BOUNDARIES[0])
-    segmentation = get_segmentation_roi(segmentation)
-    new_size = [int(o_sz * o_spc / n_spc) for o_sz, o_spc, n_spc in
-                zip(segmentation.GetSize(), segmentation.GetSpacing(), new_spacing)]
+    #new_size = [int(o_sz * o_spc / n_spc) for o_sz, o_spc, n_spc in
+    #            zip(segmentation.GetSize(), segmentation.GetSpacing(), new_spacing)]
     segmentation = sitk.Resample(segmentation, size=new_size,
-                                 outputOrigin=segmentation.GetOrigin(),
+                                 outputOrigin=new_origin,
                                  outputSpacing=new_spacing,
                                  interpolator=sitk.sitkNearestNeighbor,
                                  defaultPixelValue=0)
@@ -116,11 +115,11 @@ def fit_roi(size, aspect_ratio):
 
 class Crop:
     def __init__(self, data: sitk.Image, segmentation: sitk.Image, bb_size):
-        self.segmentation = segmentation
+        self.segmentation = get_segmentation_roi(segmentation)
         # place bb so that the segmentation is centered
         self.offset = ((np.array(bb_size) - np.array(self.segmentation.GetSize())) / 2).astype(int)
         # adjust offset if resulting bb is out of bounds
-        segmentation_origin_in_data = data.TransformPhysicalPointToIndex(segmentation.GetOrigin())
+        segmentation_origin_in_data = data.TransformPhysicalPointToIndex(self.segmentation.GetOrigin())
         self.offset = [seg_or if seg_or - off < 0 else off
                        for seg_or, off in zip(segmentation_origin_in_data, self.offset)]
         self.offset = [off + ((seg_or - off + bb_sz) - data_sz) if seg_or - off + bb_sz > data_sz else off
@@ -247,14 +246,18 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             data_sitk = clip_intensities(data_sitk)
             if not os.path.exists(output_directory):
                 os.makedirs(output_directory)
-                sitk.WriteImage(data_sitk, os.path.join(output_directory, "full.nrrd"))
-                sitk.WriteImage(segmentation_sitk, os.path.join(output_directory, "segmentation.seg.nrrd"))
+            sitk.WriteImage(data_sitk, os.path.join(output_directory, "full.nrrd"))
+            sitk.WriteImage(segmentation_sitk, os.path.join(output_directory, "segmentation.seg.nrrd"))
             print(f"\rResampling: {i + 1}/{len(dataset)}", end="")
         else:
             print(f"\rChecking file integrity: {i + 1}/{len(dataset)}", end="")
         if calculate_bb:
-            segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
-            bb_size = [max(x, y) for x, y in zip(bb_size, segmentation_sitk.GetSize())]
+            if segmentation_sitk is None:
+                segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
+            roi = get_segmentation_roi(segmentation_sitk).GetSize()
+            if roi_aspect_ratio is not None:
+                roi = fit_roi(roi, roi_aspect_ratio)
+            bb_size = [max(x, y) for x, y in zip(bb_size, roi)]
     for entry in invalid_data:
         dataset.remove(entry)
     if len(invalid_data) != 0:
@@ -263,7 +266,6 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
         print()
 
     # Generate cropped data (and calculate intensity ranges if required)
-    minimal_roi_precision_after_ar_fit = 1
     for i, (patient_id, _, _) in enumerate(dataset):
         output_directory = os.path.join(out, str(patient_id), "raw")
         data_sitk = sitk.ReadImage(os.path.join(output_directory, "full.nrrd"))
@@ -272,11 +274,12 @@ def main(config, data, out, do_resample=True, do_crop=True, do_normalize=True, c
             segmentation_sitk = sitk.ReadImage(os.path.join(output_directory, "segmentation.seg.nrrd"))
             # crops
             crop = Crop(data_sitk, segmentation_sitk, bb_size)
-            roi_size = np.array(segmentation_sitk.GetSize() + 2*roi_margin)
+            roi = get_segmentation_roi(segmentation_sitk).GetSize()
+            if roi_aspect_ratio is not None:
+                roi = fit_roi(roi, roi_aspect_ratio)
+            roi_size = np.array(roi + 2*roi_margin)
             if roi_aspect_ratio is not None:
                 roi_size_fit = fit_roi(roi_size, roi_aspect_ratio)
-                minimal_roi_precision_after_ar_fit = min(minimal_roi_precision_after_ar_fit,
-                                                         np.prod(roi_size) / np.prod(roi_size_fit))
                 roi_size = roi_size_fit
             crop_roi_only = Crop(data_sitk, segmentation_sitk, roi_size)
             # fixed bb crop
