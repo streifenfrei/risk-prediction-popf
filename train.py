@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 import tensorflow as tf
 import yaml
 from sklearn.model_selection import StratifiedKFold, train_test_split
+from tensorflow.python.ops import summary_ops_v2
 
 from models import *
 from data_loader import get_dataset_from_config, get_data_loader_from_config
@@ -36,9 +37,44 @@ def load_model(model_string, volumetric, input_shape, extra_options=None):
                                        volumetric=volumetric, **extra_options)
 
 
+class EvaluationCallback(tf.keras.callbacks.TensorBoard):
+    def __init__(self, test_data, **kwargs):
+        super().__init__(**kwargs)
+        self.test_data = test_data
+
+    @property
+    def _test_writer(self):
+        if 'test' not in self._writers:
+            self._writers['test'] = summary_ops_v2.create_file_writer_v2(os.path.join(self._log_write_dir, 'test'))
+        return self._writers['test']
+
+    def _log_epoch_metrics(self, epoch, logs):
+        if not logs:
+            return
+
+        train_logs = {k: v for k, v in logs.items() if not k.startswith('val_')}
+        val_logs = {k: v for k, v in logs.items() if k.startswith('val_')}
+        train_logs = self._collect_learning_rate(train_logs)
+        test_logs = self.model.evaluate(self.test_data, return_dict=True, verbose=False)
+        with summary_ops_v2.always_record_summaries():
+            if train_logs:
+                with self._train_writer.as_default():
+                    for name, value in train_logs.items():
+                        summary_ops_v2.scalar('epoch_' + name, value, step=epoch)
+            if val_logs:
+                with self._val_writer.as_default():
+                    for name, value in val_logs.items():
+                        name = name[4:]  # Remove 'val_' prefix.
+                        summary_ops_v2.scalar('epoch_' + name, value, step=epoch)
+            with self._test_writer.as_default():
+                for name, value in test_logs.items():
+                    summary_ops_v2.scalar('epoch_' + name, value, step=epoch)
+
+
 def train_model(config,
                 train_data,
                 validation_data,
+                test_data,
                 ct_shape,
                 checkpoint_dir=None,
                 log_dir=None):
@@ -49,12 +85,12 @@ def train_model(config,
     if not volumetric and len(ct_shape) == 4:
         ct_shape = (*ct_shape[:2], 1)
     include_segmentation = config["model"] == "resnet_att"
-    train_dl, val_dl, input_shape = get_data_loader_from_config(train_data,
-                                                                validation_data,
-                                                                config_data,
-                                                                ct_shape,
-                                                                volumetric=volumetric,
-                                                                include_segmentation=include_segmentation)
+    train_dl, (val_dl, test_dl), input_shape = get_data_loader_from_config(train_data,
+                                                                           (validation_data, test_data),
+                                                                           config_data,
+                                                                           ct_shape,
+                                                                           volumetric=volumetric,
+                                                                           include_segmentation=include_segmentation)
     # initialize model
     extra_options = config.get("model_extra_options", None)
     model = load_model(config["model"], volumetric, input_shape, extra_options)
@@ -65,6 +101,7 @@ def train_model(config,
     initial_epoch = 0
     if checkpoint_dir is not None:
         val_dl = val_dl.cache(os.path.join(checkpoint_dir, "val_cache"))
+        test_dl = test_dl.cache(os.path.join(checkpoint_dir, "test_cache"))
         checkpoint_file = os.path.join(checkpoint_dir, "{epoch:04d}.ckpt")
         checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_file,
                                                                  monitor="val_auc",
@@ -76,8 +113,8 @@ def train_model(config,
             model.load_weights(latest_checkpoint)
             initial_epoch = int(os.path.splitext(os.path.basename(latest_checkpoint))[0])
     if log_dir is not None:
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, write_graph=False)
-        callbacks.append(tensorboard_callback)
+        evaluation_callback = EvaluationCallback(test_data=test_dl, log_dir=log_dir, write_graph=False)
+        callbacks.append(evaluation_callback)
     # train
     tf.keras.backend.clear_session()
     return model.fit(x=train_dl,
@@ -134,14 +171,19 @@ def main(config, custom_model_generator=None):
                     folds_done = fold - 1
                     break
 
-        for i, (train, validation) in enumerate(k_fold.split(dataset, [x[0] for x in dataset]), start=1):
+        for i, (train, test) in enumerate(k_fold.split(dataset, [x[0] for x in dataset]), start=1):
             if i <= folds_done:
                 continue
+            train, validation = train_test_split(train,
+                                                 train_size=config_training["train_size"],
+                                                 random_state=42,
+                                                 stratify=[dataset[x][0] for x in train])
             train = [dataset[i] for i in train.tolist()]
             validation = [dataset[i] for i in validation.tolist()]
+            test = [dataset[i] for i in test.tolist()]
             checkpoint_dir = os.path.join(config["workspace"], "cross_validation", str(i))
             log_dir = os.path.join(checkpoint_dir, "logs")
-            train_model(config, train, validation, ct_shape,
+            train_model(config, train, validation, test, ct_shape,
                         checkpoint_dir=checkpoint_dir,
                         log_dir=log_dir)
 

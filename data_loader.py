@@ -311,7 +311,7 @@ def get_resize_ratio(**kwargs):
     return pre / post
 
 
-def get_data_loader_from_config(train_data, validation_data, config, ct_shape, volumetric=True,
+def get_data_loader_from_config(train_data, test_data_sets, config, ct_shape, volumetric=True,
                                 include_segmentation=False):
     config = config.get("data", config)
     input_type = config["input_type"]
@@ -352,17 +352,18 @@ def get_data_loader_from_config(train_data, validation_data, config, ct_shape, v
     if vector_shape is not None:
         input_shape.append(vector_shape)
     train_dl = get_tf_dataset(train_augmenter, input_shape, output_shape)
-    #   cache validation data
-    val_augmenter = get_data_augmenter(data=validation_data,
-                                       batch_size=config["batch_size"],
-                                       mode=mode,
-                                       balance=balance,
-                                       volumetric=volumetric,
-                                       include_segmentation=include_segmentation,
-                                       normalization_range=normalization_range,
-                                       vector_generator=vector_generator,
-                                       input_shape=ct_shape[:-1],
-                                       sample_count=sample_count,
-                                       seed=42)
-    val_dl = get_tf_dataset(val_augmenter, input_shape, output_shape)
-    return train_dl, val_dl, input_shape
+    test_data_loader = []
+    for data in test_data_sets:
+        val_augmenter = get_data_augmenter(data=data,
+                                           batch_size=config["batch_size"],
+                                           mode=mode,
+                                           balance=balance,
+                                           volumetric=volumetric,
+                                           include_segmentation=include_segmentation,
+                                           normalization_range=normalization_range,
+                                           vector_generator=vector_generator,
+                                           input_shape=ct_shape[:-1],
+                                           sample_count=sample_count,
+                                           seed=42)
+        test_data_loader.append(get_tf_dataset(val_augmenter, input_shape, output_shape))
+    return train_dl, test_data_loader, input_shape
