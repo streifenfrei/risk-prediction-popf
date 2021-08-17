@@ -191,12 +191,14 @@ def main(config, custom_model_generator=None):
         metrics = {
             "loss": [],
             "val_loss": [],
+            "test_loss": [],
             "auc": [],
-            "val_auc": []
+            "val_auc": [],
+            "test_auc": []
         }
         tb_mapping = {
-            "epoch_loss": {"train": "loss", "validation": "val_loss"},
-            "epoch_auc": {"train": "auc", "validation": "val_auc"}
+            "epoch_loss": {"train": "loss", "validation": "val_loss", "test": "test_loss"},
+            "epoch_auc": {"train": "auc", "validation": "val_auc", "test": "test_auc"}
         }
         history = get_history_from_tb(config["workspace"])
         for tb_metric in history:
@@ -214,12 +216,16 @@ def main(config, custom_model_generator=None):
             for i in range(config_training["epochs"]):
                 tf.summary.scalar(f"avg_loss", metrics["val_loss"][i], step=i)
                 tf.summary.scalar(f"avg_auc", metrics["val_auc"][i], step=i)
+        with tf.summary.create_file_writer(os.path.join(config["workspace"], "test")).as_default():
+            for i in range(config_training["epochs"]):
+                tf.summary.scalar(f"avg_loss", metrics["test_loss"][i], step=i)
+                tf.summary.scalar(f"avg_auc", metrics["test_auc"][i], step=i)
         with open(os.path.join(config["workspace"], "summary.json"), "w") as file:
             json.dump(
                 {
                     "auc": max(metrics["auc"]),
                     "val_auc": max(metrics["val_auc"]),
-                    "val_auc_epoch": metrics["val_auc"].index(max(metrics["val_auc"])) + 1
+                    "test_auc": max(metrics["test_auc"])
                 }, file)
     else:
         train, validation = train_test_split(dataset,

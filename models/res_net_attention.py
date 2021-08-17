@@ -94,6 +94,7 @@ def get_model(ct_shape=None,
         def metrics(self):
             return [total_loss_metric, label_loss_metric, attention_loss_metric, auc_metric]
 
+        # see https://arxiv.org/abs/2005.02690
         SIGMOID_ALPHA = 100
         SIGMOID_BETA = 0.4
 
