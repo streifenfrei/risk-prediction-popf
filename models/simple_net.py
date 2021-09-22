@@ -6,7 +6,8 @@ def get_model(ct_shape=None,
               vector_shape=None,
               first_conv_channel=64,
               dropout=0.3,
-              volumetric=True):
+              volumetric=True,
+              output_features=False):
     if ct_shape is None:
         ct_shape = (None, None, None, 1) if volumetric else (None, None, 1)
     convolutional_layer = layers.Conv3D if volumetric else layers.Conv2D
@@ -29,11 +30,11 @@ def get_model(ct_shape=None,
 
     model.add(convolutional_layer(filters=4*first_conv_channel, kernel_size=3, padding="same", activation="relu"))
     model.add(max_pool_layer())
-    model.add(layers.BatchNormalization())
+    model.add(layers.BatchNormalization(name="features"))
 
     model.add(global_pooling_layer())
     model.add(layers.Dense(units=8*first_conv_channel, activation="relu"))
     model.add(layers.Dropout(dropout))
 
-    model.add(layers.Dense(units=1, activation="sigmoid"))
-    return model
+    model.add(layers.Dense(units=2, activation="softmax"))
+    return keras.models.Model([model.inputs], [model.output, model.get_layer("features").output]) if output_features else model

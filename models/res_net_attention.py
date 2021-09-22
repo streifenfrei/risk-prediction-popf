@@ -1,6 +1,8 @@
 import tensorflow as tf
 import tensorflow_addons as tfa
 from tensorflow.keras import layers
+from tensorflow.python.keras.layers import UpSampling2D, UpSampling3D
+from tensorflow.python.ops import math_ops
 
 
 def conv_block(x, filters, regularizer, volumetric, split, strides=1, padding="valid", activation=None):
@@ -52,7 +54,11 @@ def get_model(ct_shape=None,
               split=True,
               dense_regularizer=None,
               conv_regularizer=None,
-              volumetric=True):
+              volumetric=True,
+              alpha=500,
+              sigmoid_alpha=100,
+              sigmoid_beta=0.5,
+              output_features=None):
     if ct_shape is None:
         ct_shape = (None, None, None, 1) if volumetric else (None, None, 1)
     convolutional_layer = layers.Conv3D if volumetric else layers.Conv2D
@@ -69,18 +75,12 @@ def get_model(ct_shape=None,
                                  split=split)
     x = squeeze_excitation_block(x, first_conv_channel, ratio, strides=2, regularizer=conv_regularizer,
                                  volumetric=volumetric, split=split)
-    x = squeeze_excitation_block(x, first_conv_channel, ratio, regularizer=conv_regularizer, volumetric=volumetric,
-                                 split=split)
-    x = squeeze_excitation_block(x, 2 * first_conv_channel, ratio, strides=2, regularizer=conv_regularizer,
-                                 volumetric=volumetric, split=split)
-    x = squeeze_excitation_block(x, 2 * first_conv_channel, ratio, regularizer=conv_regularizer, volumetric=volumetric,
-                                 split=split)
-    x = squeeze_excitation_block(x, 4 * first_conv_channel, ratio, regularizer=conv_regularizer, volumetric=volumetric)
-    features = squeeze_excitation_block(x, 4 * first_conv_channel, ratio, regularizer=conv_regularizer,
-                                        volumetric=volumetric, name="attention_map")
+    x = squeeze_excitation_block(x, first_conv_channel, ratio, regularizer=conv_regularizer, volumetric=volumetric)
+    features = squeeze_excitation_block(x, first_conv_channel, ratio, regularizer=conv_regularizer,
+                                        volumetric=volumetric, split=split, name="attention_map")
     prediction = global_pooling_layer()(features)
     prediction = layers.Dropout(rate=dropout)(prediction)
-    prediction_layer = layers.Dense(units=1, activation="sigmoid",
+    prediction_layer = layers.Dense(units=2, activation="softmax",
                                     kernel_regularizer=dense_regularizer, name="label")
     prediction = prediction_layer(prediction)
 
@@ -90,38 +90,54 @@ def get_model(ct_shape=None,
     auc_metric = tf.keras.metrics.AUC(name="auc")
 
     class AttentionResnet(tf.keras.Model):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.add_weight(shape=prediction_layer.weights[0].shape, name="attention_conv", trainable=False)
+
         @property
         def metrics(self):
             return [total_loss_metric, label_loss_metric, attention_loss_metric, auc_metric]
 
         # see https://arxiv.org/abs/2005.02690
-        SIGMOID_ALPHA = 100
-        SIGMOID_BETA = 0.4
-
         def _create_attention_map(self, feats):
-            attention_weights = tf.identity(prediction_layer.weights[0])
-            weights_shape = [1, 1, 1, attention_weights.shape[0], 1] if volumetric else \
-                [1, 1, attention_weights.shape[0], 1]
+            attention_weights = self.non_trainable_weights[-1].assign(prediction_layer.weights[0])
+            weights_shape = [1, 1, 1, attention_weights.shape[0], 2] if volumetric else \
+                [1, 1, attention_weights.shape[0], 2]
             attention_weights = tf.reshape(attention_weights, weights_shape)
             attention = tf.nn.conv3d(feats, attention_weights, strides=[1, 1, 1, 1, 1], padding="SAME") if \
                 volumetric else tf.nn.conv2d(feats, attention_weights, strides=1, padding="SAME")
             attention = tf.nn.relu(attention)
             # tf does not seem to have builtin bilinear upsampling for 3D data (only nearest neighbour)
-            attention = tf.keras.layers.UpSampling3D(size=[8, 8, 8])(attention)
-            attention /= tf.reduce_max(attention)
-            return tf.sigmoid(self.SIGMOID_ALPHA * (attention - self.SIGMOID_BETA))
+            attention = UpSampling3D(size=[4, 4, 4])(attention) if \
+                volumetric else UpSampling2D(size=[4, 4])
+            positive_map, negative_map = tf.split(attention, num_or_size_splits=2, axis=-1)
+            p_max = tf.reduce_max(positive_map)
+            p_min = tf.reduce_min(positive_map)
+            positive_map = (positive_map - p_min) / (p_max - p_min)
+            n_max = tf.reduce_max(negative_map)
+            n_min = tf.reduce_min(negative_map)
+            negative_map = (negative_map - n_min) / (n_max - n_min)
+            attention = tf.concat([positive_map, negative_map], axis=-1)
+            return tf.sigmoid(sigmoid_alpha * (attention - sigmoid_beta))
 
-        ALPHA = 0.5
+        ALPHA = 500
+
+        def calc_loss(self, _x, tlabel, seg):
+            label, feats = self(_x, training=True)
+            attention_map = self._create_attention_map(feats)
+            label = tf.squeeze(label)
+            label_loss = tfa.losses.SigmoidFocalCrossEntropy()(label, tlabel)
+            attention_map = tf.where(seg == 1., 1., attention_map)
+            attention_loss = alpha * tf.keras.backend.mean(math_ops.squared_difference(attention_map, seg),
+                                                                axis=range(1, 5))
+            return label, label_loss, attention_loss
 
         def train_step(self, data):
             _x, (tlabel, seg) = data
+            seg = tf.concat([seg, seg], axis=-1)
             with tf.GradientTape() as tape:
-                label, feats = self(_x, training=True)
-                attention_map = self._create_attention_map(feats)
-                label = tf.squeeze(label)
-                label_loss = tfa.losses.SigmoidFocalCrossEntropy()(label, tlabel)
-                attention_loss = tf.losses.MSE(attention_map, seg)
-                total_loss = label_loss + self.ALPHA * attention_loss
+                label, label_loss, attention_loss = self.calc_loss(_x, tlabel, seg)
+                total_loss = label_loss + attention_loss
             trainable_vars = self.trainable_variables
             gradients = tape.gradient(total_loss, trainable_vars)
             self.optimizer.apply_gradients(zip(gradients, trainable_vars))
@@ -133,13 +149,9 @@ def get_model(ct_shape=None,
 
         def test_step(self, data):
             _x, (tlabel, seg) = data
-            label, feats = self(_x, training=False)
-            attention_map = self._create_attention_map(feats)
-            label = tf.squeeze(label)
-            label_loss = tfa.losses.SigmoidFocalCrossEntropy()(label, tlabel)
-            attention_loss = tf.losses.MSE(attention_map, seg)
-            total_loss = label_loss + self.ALPHA * attention_loss
-
+            seg = tf.concat([seg, seg], axis=-1)
+            label, label_loss, attention_loss = self.calc_loss(_x, tlabel, seg)
+            total_loss = label_loss + attention_loss
             total_loss_metric.update_state(total_loss)
             label_loss_metric.update_state(label_loss)
             attention_loss_metric.update_state(attention_loss)
