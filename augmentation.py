@@ -37,7 +37,9 @@ class RealZoomTransform(AbstractTransform, ABC):
             seg = split_seg[i] if split_seg is not None else None
             if np.random.random() < self.p_per_sample:
                 sample, seg = crop(sample, seg=seg, crop_size=(size / zoom).astype(int), crop_type="random")
-                sample, seg = augment_resize(sample.squeeze(0), sample_seg=seg.squeeze(0), target_size=size.tolist())
+                if seg is not None:
+                    seg = seg.squeeze(0)
+                sample, seg = augment_resize(sample.squeeze(0), sample_seg=seg, target_size=size.tolist())
             else:
                 sample = sample.squeeze(0)
                 if seg is not None:

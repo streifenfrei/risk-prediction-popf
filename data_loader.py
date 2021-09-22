@@ -7,7 +7,6 @@ from enum import IntEnum
 import SimpleITK as sitk
 import numpy as np
 import tensorflow as tf
-from batchgenerators.augmentations.crop_and_pad_augmentations import random_crop
 from batchgenerators.augmentations.spatial_transformations import augment_resize
 
 from batchgenerators.dataloading import SlimDataLoaderBase, MultiThreadedAugmenter
@@ -68,7 +67,7 @@ def get_dataset_from_config(config, volumetric=True):
             input_shape = [*input_shape[:2], 1]
     else:
         dummy_loader = get_data_augmenter(dataset[:1], volumetric=volumetric)
-        input_shape = next(dummy_loader)[0].shape[-4:]
+        input_shape = next(dummy_loader)[0][0].shape[-4:]
         dummy_loader._finish()
     return dataset, input_shape
 
@@ -76,7 +75,7 @@ def get_dataset_from_config(config, volumetric=True):
 def visualize_data(data: np.ndarray, title=""):
     import matplotlib.pyplot as plt
     if data.ndim == 5:
-        data = data[1, :, :, :, :]
+        data = data[0, :, :, :, :]
     data = data.squeeze()
     if len(data.shape) == 3:
         for image in np.split(data, data.shape[-1], -1):
@@ -125,6 +124,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
                  vector_generator=None,
                  input_shape=None,
                  sample_count=1,
+                 min_sample_coverage=0.5,
                  number_of_threads_in_multithreaded=4,
                  epochs=1,
                  seed=None):
@@ -143,7 +143,13 @@ class DataLoader(SlimDataLoaderBase, ABC):
         self.normalization_range = normalization_range
         self.vector_generator = vector_generator
         self.input_shape = input_shape
+        self.min_sample_coverage = min_sample_coverage
         if self.mode == DataLoader.Mode.SAMPLE:
+            self.sample_roots = {}
+            for _, _, segmentation_file in self._data:
+                directory = os.path.split(segmentation_file)[0]
+                roots = np.load(os.path.join(directory, "sample_coverages.npy"))
+                self.sample_roots[segmentation_file] = roots
             self._data *= sample_count
         if balance:
             trues = list(x for x in self._data if x[0] == 1)
@@ -216,19 +222,20 @@ class DataLoader(SlimDataLoaderBase, ABC):
                     data_np, seg = augment_resize(data_np, seg, self.input_shape)
                     vector_gen_args["input_shape_post"] = self.input_shape
                 elif self.mode == DataLoader.Mode.SAMPLE:
-                    data_np = np.expand_dims(data_np, 0)
-                    seg = np.expand_dims(seg, 0)
                     with RNGContext(self.seed):
-                        data_np, seg = random_crop(data_np, seg=seg, crop_size=self.input_shape)
-                        data_np = np.squeeze(data_np, 0)
-                        seg = np.squeeze(seg, 0)
+                        x, y, z = random.choice(self.sample_roots[segmentation_file])
+                        data_np = data_np[:, x:x + self.input_shape[0], y:y + self.input_shape[1],
+                                  z:z + self.input_shape[2]]
+                        if seg is not None:
+                            seg = seg[:, x:x + self.input_shape[0], y:y + self.input_shape[1],
+                                  z:z + self.input_shape[2]]
                     vector_gen_args["input_shape_post"] = self.input_shape
                 if self.vector_generator is not None:
                     vector_batch.append(self.vector_generator(**vector_gen_args))
                 data_batch.append(data_np)
                 seg_batch.append(seg)
 
-                label_batch.append(label)
+                label_batch.append((label, 1 - label))
         batch = {"data": np.stack(data_batch),
                  "label": np.stack(label_batch)}
         if vector_batch is not None:
@@ -248,6 +255,7 @@ def get_data_augmenter(data, batch_size=1,
                        vector_generator=None,
                        input_shape=None,
                        sample_count=1,
+                       min_sample_coverage=0.5,
                        transforms=None,
                        threads=1,
                        seed=None):
@@ -263,6 +271,7 @@ def get_data_augmenter(data, batch_size=1,
                         vector_generator=vector_generator,
                         input_shape=input_shape,
                         sample_count=sample_count,
+                        min_sample_coverage=min_sample_coverage,
                         number_of_threads_in_multithreaded=threads,
                         seed=seed)
     transforms = transforms + [PrepareForTF()]
@@ -279,7 +288,11 @@ def get_tf_dataset(augmenter, input_shapes, output_shapes):
         augmenter._finish()
 
     input_signatures = tuple([tf.TensorSpec(shape=(batch_size, *shape), dtype=tf.float32) for shape in input_shapes])
+    if len(input_signatures) == 1:
+        input_signatures = input_signatures[0]
     output_signatures = tuple([tf.TensorSpec(shape=(batch_size, *shape), dtype=tf.float32) for shape in output_shapes])
+    if len(output_signatures) == 1:
+        output_signatures = output_signatures[0]
     tf_dataset = tf.data.Dataset.from_generator(generator, output_signature=(input_signatures, output_signatures))
     return tf_dataset
 
@@ -296,7 +309,9 @@ class PrepareForTF(AbstractTransform, ABC):
             outputs.append(tf.convert_to_tensor(seg, dtype=tf.float32))
         if "vector" in data_dict:
             inputs.append(tf.convert_to_tensor(data_dict["vector"], dtype=tf.float32))
-        return tuple(inputs), tuple(outputs)
+        inputs = inputs[0] if len(inputs) == 1 else tuple(inputs)
+        outputs = outputs[0] if len(outputs) == 1 else tuple(outputs)
+        return inputs, outputs
 
 
 def _fit_batch_size(data_count, max_batch_size):
@@ -316,6 +331,7 @@ def get_data_loader_from_config(train_data, test_data_sets, config, ct_shape, vo
     config = config.get("data", config)
     input_type = config["input_type"]
     sample_count = 1
+    min_sample_coverage = 0
     vector_shape = None
     vector_generator = None
     if input_type == "crop":
@@ -323,6 +339,7 @@ def get_data_loader_from_config(train_data, test_data_sets, config, ct_shape, vo
     elif input_type == "sample":
         mode = DataLoader.Mode.SAMPLE
         sample_count = config["sample"]["count"]
+        min_sample_coverage = config["sample"]["min_coverage"],
     elif input_type == "resize":
         mode = DataLoader.Mode.RESIZE
         if config["resize"]["use_ratio_vector"]:
@@ -333,25 +350,30 @@ def get_data_loader_from_config(train_data, test_data_sets, config, ct_shape, vo
     normalization_range = HOUNSFIELD_BOUNDARIES if ("online_normalization" in config and
                                                     config["online_normalization"]) else None
     balance = config.get("balance", False)
-    train_augmenter = get_data_augmenter(data=train_data,
-                                         batch_size=config["batch_size"],
-                                         mode=mode,
-                                         balance=balance,
-                                         volumetric=volumetric,
-                                         include_segmentation=include_segmentation,
-                                         normalization_range=normalization_range,
-                                         vector_generator=vector_generator,
-                                         input_shape=ct_shape[:-1],
-                                         sample_count=1,
-                                         transforms=get_transforms(),
-                                         threads=config["loader_threads"])
     input_shape = [ct_shape]
-    output_shape = [[]]
+    output_shape = [[2]]
     if include_segmentation:
         output_shape.append(ct_shape)
     if vector_shape is not None:
         input_shape.append(vector_shape)
-    train_dl = get_tf_dataset(train_augmenter, input_shape, output_shape)
+    if train_data is not None:
+        train_augmenter = get_data_augmenter(data=train_data,
+                                             batch_size=config["batch_size"],
+                                             mode=mode,
+                                             balance=balance,
+                                             volumetric=volumetric,
+                                             include_segmentation=include_segmentation,
+                                             normalization_range=normalization_range,
+                                             vector_generator=vector_generator,
+                                             input_shape=ct_shape[:-1],
+                                             sample_count=sample_count,
+                                             min_sample_coverage=min_sample_coverage,
+                                             transforms=get_transforms(),
+                                             threads=config["loader_threads"])
+
+        train_dl = get_tf_dataset(train_augmenter, input_shape, output_shape)
+    else:
+        train_dl = None
     test_data_loader = []
     for data in test_data_sets:
         val_augmenter = get_data_augmenter(data=data,
@@ -364,6 +386,7 @@ def get_data_loader_from_config(train_data, test_data_sets, config, ct_shape, vo
                                            vector_generator=vector_generator,
                                            input_shape=ct_shape[:-1],
                                            sample_count=sample_count,
+                                           min_sample_coverage=min_sample_coverage,
                                            seed=42)
         test_data_loader.append(get_tf_dataset(val_augmenter, input_shape, output_shape))
     return train_dl, test_data_loader, input_shape

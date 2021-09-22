@@ -10,6 +10,11 @@ from tensorflow.python.ops import summary_ops_v2
 from models import *
 from data_loader import get_dataset_from_config, get_data_loader_from_config
 
+# https://stackoverflow.com/a/65523597
+configuration = tf.compat.v1.ConfigProto()
+configuration.gpu_options.allow_growth = True
+session = tf.compat.v1.Session(config=configuration)
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 model_mapping = {
     "simplenet": simple_net.get_model,
@@ -149,9 +154,8 @@ def get_history_from_tb(directory):
 def main(config, custom_model_generator=None):
     model_mapping["custom"] = custom_model_generator
     config_training = config["training"]
-    volumetric = config.get("3D", True)
     config_data = config["data"]
-    dataset, ct_shape = get_dataset_from_config(config_data, volumetric=volumetric)
+    dataset, ct_shape = get_dataset_from_config(config_data, config["3D"])
 
     # cross validation
     if config_training["folds"] >= 2:
@@ -162,7 +166,7 @@ def main(config, custom_model_generator=None):
             history = history["epoch_loss"]
             for key in history:
                 path = os.path.normpath(key).split(os.sep)
-                if path[-1] == "train":
+                if path[-1] != "train":
                     continue
                 fold = int(path[1])
                 if len(history[key]) == config_training["epochs"]:
@@ -233,6 +237,7 @@ def main(config, custom_model_generator=None):
                                              random_state=42,
                                              stratify=[x[0] for x in dataset])
         log_dir = os.path.join(config["workspace"], "logs")
+        # TODO broken due to missing test data
         history = train_model(config, train, validation, ct_shape, checkpoint_dir=config["workspace"], log_dir=log_dir)
         fold_summary = {
             "loss": list(history.history["loss"]),
