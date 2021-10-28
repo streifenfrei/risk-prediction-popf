@@ -55,10 +55,10 @@ def get_model(ct_shape=None,
               dense_regularizer=None,
               conv_regularizer=None,
               volumetric=True,
-              alpha=500,
+              alpha=3,
               sigmoid_alpha=100,
               sigmoid_beta=0.5,
-              output_features=None):
+              p_class_weight=0.5):
     if ct_shape is None:
         ct_shape = (None, None, None, 1) if volumetric else (None, None, 1)
     convolutional_layer = layers.Conv3D if volumetric else layers.Conv2D
@@ -113,11 +113,12 @@ def get_model(ct_shape=None,
             positive_map, negative_map = tf.split(attention, num_or_size_splits=2, axis=-1)
             p_max = tf.reduce_max(positive_map)
             p_min = tf.reduce_min(positive_map)
-            positive_map = (positive_map - p_min) / (p_max - p_min)
+            positive_map = (positive_map - p_min) / (p_max - p_min + 10e-7)
             n_max = tf.reduce_max(negative_map)
             n_min = tf.reduce_min(negative_map)
-            negative_map = (negative_map - n_min) / (n_max - n_min)
+            negative_map = (negative_map - n_min) / (n_max - n_min + 10e-7)
             attention = tf.concat([positive_map, negative_map], axis=-1)
+            attention = tf.keras.backend.sigmoid(attention)
             return tf.sigmoid(sigmoid_alpha * (attention - sigmoid_beta))
 
         ALPHA = 500
@@ -127,17 +128,17 @@ def get_model(ct_shape=None,
             attention_map = self._create_attention_map(feats)
             label = tf.squeeze(label)
             label_loss = tfa.losses.SigmoidFocalCrossEntropy()(label, tlabel)
-            attention_map = tf.where(seg == 1., 1., attention_map)
-            attention_loss = alpha * tf.keras.backend.mean(math_ops.squared_difference(attention_map, seg),
-                                                                axis=range(1, 5))
+            attention_map = tf.where(seg == 1., 0., attention_map)
+            attention_loss = alpha * tf.keras.backend.mean(attention_map, axis=range(1, 5))
             return label, label_loss, attention_loss
 
         def train_step(self, data):
             _x, (tlabel, seg) = data
             seg = tf.concat([seg, seg], axis=-1)
+            weight = p_class_weight * tlabel[:, 0] + (1 - p_class_weight) * tlabel[:, 1]
             with tf.GradientTape() as tape:
                 label, label_loss, attention_loss = self.calc_loss(_x, tlabel, seg)
-                total_loss = label_loss + attention_loss
+                total_loss = weight * (label_loss + attention_loss)
             trainable_vars = self.trainable_variables
             gradients = tape.gradient(total_loss, trainable_vars)
             self.optimizer.apply_gradients(zip(gradients, trainable_vars))
@@ -151,7 +152,8 @@ def get_model(ct_shape=None,
             _x, (tlabel, seg) = data
             seg = tf.concat([seg, seg], axis=-1)
             label, label_loss, attention_loss = self.calc_loss(_x, tlabel, seg)
-            total_loss = label_loss + attention_loss
+            weight = p_class_weight * tlabel[:, 0] + (1 - p_class_weight) * tlabel[:, 1]
+            total_loss = weight * (label_loss + attention_loss)
             total_loss_metric.update_state(total_loss)
             label_loss_metric.update_state(label_loss)
             attention_loss_metric.update_state(attention_loss)

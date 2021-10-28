@@ -1,6 +1,5 @@
 import json
 import os
-import random
 from argparse import ArgumentParser
 
 import tensorflow as tf
@@ -40,8 +39,10 @@ def get_heatmap(model, data):
     return heatmaps, label
 
 
-def visualize(model, data_loader, ids, output_dir=None, dataset_type="test"):
+def visualize(model, data_loader, ids, output_dir=None, evaluate_only=False, dataset_type="test"):
     auc = tf.keras.metrics.AUC()
+    auc_p = tf.keras.metrics.AUC()
+    auc_n = tf.keras.metrics.AUC()
     accuracy = tf.keras.metrics.Accuracy()
     if output_dir is not None and not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -49,35 +50,46 @@ def visualize(model, data_loader, ids, output_dir=None, dataset_type="test"):
         (data), [gt_label, segmentation] = data
         [positive_hm, negative_hm], predicted_label = get_heatmap(model, data)
         auc.update_state(gt_label, predicted_label)
+        if gt_label[0][0] == 1:
+            auc_p.update_state(gt_label, predicted_label)
+        elif gt_label[0][0] == 0:
+            auc_n.update_state(gt_label, predicted_label)
+        else:
+            raise ValueError()
         accuracy.update_state(gt_label, predicted_label)
-        data = np.moveaxis(tf.squeeze(data).numpy(), (0, 1), (1, 0))
-        positive_hm = np.moveaxis(tf.squeeze(positive_hm).numpy(), (0, 1), (1, 0))
-        negative_hm = np.moveaxis(tf.squeeze(negative_hm).numpy(), (0, 1), (1, 0))
-        segmentation = np.moveaxis(tf.squeeze(segmentation).numpy(), (0, 1), (1, 0))
-        assert data.shape == positive_hm.shape == segmentation.shape
-        for i in range(data.shape[-1]):
-            fig, axs = plt.subplots(3, 2, constrained_layout=True)
-            axs[0][0].imshow(data[:, :, i], cmap="gray", vmin=0, vmax=1)
-            axs[0][0].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-            axs[0][1].imshow(positive_hm[:, :, i], cmap="jet", vmin=0, vmax=1)
-            axs[0][1].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-            axs[0][1].set_title(f"positive_prob: {predicted_label.numpy()[0, 0]}")
-            axs[1][0].imshow(negative_hm[:, :, i], cmap="jet", vmin=0, vmax=1)
-            axs[1][0].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-            axs[1][0].set_title(f"negative_prob: {predicted_label.numpy()[0, 1]}")
-            axs[1][1].imshow(segmentation[:, :, i], cmap="OrRd", vmin=0, vmax=1)
-            axs[1][1].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-            axs[2][0].text(0.15, 0.4, f"id: {id}\n"
-                                      f"dataset: {dataset_type}\n"
-                                      f"ground truth: {gt_label.numpy()[0, 0]}/{gt_label.numpy()[0, 1]}")
-            axs[2][0].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-            axs[2][0].axis("off")
-            if output_dir is not None:
-                plt.savefig(os.path.join(output_dir, f"{id}_{i}.png"))
-            else:
-                plt.show()
-            plt.close()
-    return auc.result().numpy().item(), accuracy.result().numpy().item()
+        if not evaluate_only:
+            data = np.moveaxis(tf.squeeze(data).numpy(), (0, 1), (1, 0))
+            positive_hm = np.moveaxis(tf.squeeze(positive_hm).numpy(), (0, 1), (1, 0))
+            negative_hm = np.moveaxis(tf.squeeze(negative_hm).numpy(), (0, 1), (1, 0))
+            segmentation = np.moveaxis(tf.squeeze(segmentation).numpy(), (0, 1), (1, 0))
+            assert data.shape == positive_hm.shape == segmentation.shape
+            for i in range(data.shape[-1]):
+                fig, axs = plt.subplots(3, 2, constrained_layout=True)
+                axs[0][0].imshow(data[:, :, i], cmap="gray", vmin=0, vmax=1)
+                axs[0][0].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+                axs[0][1].imshow(data[:, :, i], cmap="gray", vmin=0, vmax=1)
+                axs[0][1].imshow(positive_hm[:, :, i], cmap="jet", vmin=0, vmax=1, alpha=0.4)
+                axs[0][1].imshow(segmentation[:, :, i], cmap="Oranges", vmin=0, vmax=1, alpha=0.4)
+                axs[0][1].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+                axs[0][1].set_title(f"positive_prob: {predicted_label.numpy()[0, 0]}")
+                axs[1][0].imshow(data[:, :, i], cmap="gray", vmin=0, vmax=1)
+                axs[1][0].imshow(negative_hm[:, :, i], cmap="jet", vmin=0, vmax=1, alpha=0.4)
+                axs[1][0].imshow(segmentation[:, :, i], cmap="Oranges", vmin=0, vmax=1, alpha=0.4)
+                axs[1][0].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+                axs[1][0].set_title(f"negative_prob: {predicted_label.numpy()[0, 1]}")
+                axs[1][1].imshow(segmentation[:, :, i], cmap="OrRd", vmin=0, vmax=1)
+                axs[1][1].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+                axs[2][0].text(0.15, 0.4, f"id: {id}\n"
+                                          f"dataset: {dataset_type}\n"
+                                          f"ground truth: {gt_label.numpy()[0, 0]}/{gt_label.numpy()[0, 1]}")
+                axs[2][0].tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+                axs[2][0].axis("off")
+                if output_dir is not None:
+                    plt.savefig(os.path.join(output_dir, f"{id}_{i}.png"))
+                else:
+                    plt.show()
+                plt.close()
+    return auc.result().numpy().item(), auc_p.result().numpy().item(), auc_n.result().numpy().item(), accuracy.result().numpy().item()
 
 
 def get_checkpoint_for_fold(workspace, history, fold):
@@ -87,7 +99,7 @@ def get_checkpoint_for_fold(workspace, history, fold):
     return os.path.join(workspace, "cross_validation", str(fold), f"{best_epoch.zfill(4)}.ckpt")
 
 
-def main(config):
+def main(config, evaluate_only=False):
     config["data"]["batch_size"] = 1
     volumetric = config["3D"]
     output_dir = os.path.join(config["workspace"], "evaluation")
@@ -98,20 +110,20 @@ def main(config):
     k_fold = StratifiedKFold(n_splits=config["training"]["folds"], shuffle=False)
     dataset, ct_shape = get_dataset_from_config(config, volumetric)
     aucs = []
+    aucs_p = []
+    aucs_n = []
     accs = []
     for i, (train, test) in enumerate(k_fold.split(dataset, [x[0] for x in dataset]), start=1):
+        print(f"\rEvaluate fold {i}/{config['training']['folds']}", end="")
         train, validation = train_test_split(train,
                                              train_size=config["training"]["train_size"],
                                              random_state=42,
                                              stratify=[dataset[x][0] for x in train])
         train = [dataset[i] for i in train.tolist()]
-        train = random.sample(train, 3)
         train_ids = [int(os.path.split(x[1])[0][-4:]) for x in train]
         validation = [dataset[i] for i in validation.tolist()]
-        validation = random.sample(validation, 3)
         val_ids = [int(os.path.split(x[1])[0][-4:]) for x in validation]
         test = [dataset[i] for i in test.tolist()]
-        test = random.sample(test, 3)
         test_ids = [int(os.path.split(x[1])[0][-4:]) for x in test]
         _, [train_loader, val_loader, test_loader], input_shape = get_data_loader_from_config(None,
                                                                                               [train, validation, test],
@@ -119,20 +131,27 @@ def main(config):
                                                                                               volumetric=volumetric,
                                                                                               include_segmentation=True)
         extra_options = config.get("model_extra_options", {})
-        extra_options["output_features"] = True
         model = load_model(config["model"], volumetric, input_shape, extra_options)
         checkpoint = tf.train.Checkpoint(model)
         checkpoint_file = get_checkpoint_for_fold(config["workspace"], history, i)
         checkpoint.restore(checkpoint_file).expect_partial()
-        visualize(model, train_loader, train_ids, os.path.join(output_dir, "train", str(i)), "training")
-        visualize(model, val_loader, val_ids, os.path.join(output_dir, "val", str(i)), "validation")
-        auc, accuracy = visualize(model, test_loader, test_ids, os.path.join(output_dir, "test", str(i)), "test")
+        if config["model"] in ["simplenet", "resnet"]:
+            model = tf.keras.models.Model([model.inputs], [model.output, model.get_layer("features").output])
+        visualize(model, train_loader, train_ids, os.path.join(output_dir, "train", str(i)), evaluate_only, "training")
+        visualize(model, val_loader, val_ids, os.path.join(output_dir, "val", str(i)), evaluate_only, "validation")
+        auc, auc_p, auc_n, accuracy = visualize(model, test_loader, test_ids, os.path.join(output_dir, "test", str(i)), evaluate_only, "test")
         aucs.append(auc)
+        aucs_p.append(auc_p)
+        aucs_n.append(auc_n)
         accs.append(accuracy)
     with open(os.path.join(output_dir, "test", "result.json"), "w") as file:
         json.dump({
             "aucs": aucs,
             "avg_auc": sum(aucs) / len(aucs),
+            "aucs_p": aucs_p,
+            "avg_auc_p": sum(aucs_p) / len(aucs_p),
+            "aucs_n": aucs_n,
+            "avg_auc_n": sum(aucs_n) / len(aucs_n),
             "accuracies": accs,
             "avg_accuracy": sum(accs) / len(accs)
         }, file, indent=4)
@@ -141,7 +160,8 @@ def main(config):
 if __name__ == '__main__':
     arg_parser = ArgumentParser()
     arg_parser.add_argument("--config", "-c", type=str, required=True)
+    arg_parser.add_argument("--evaluate", "-e", action="store_true")
     args = arg_parser.parse_args()
     with open(args.config, "r") as config_file:
         config = yaml.load(config_file, Loader=yaml.FullLoader)
-    main(config)
+    main(config, args.evaluate)

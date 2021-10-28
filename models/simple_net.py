@@ -6,8 +6,7 @@ def get_model(ct_shape=None,
               vector_shape=None,
               first_conv_channel=64,
               dropout=0.3,
-              volumetric=True,
-              output_features=False):
+              volumetric=True):
     if ct_shape is None:
         ct_shape = (None, None, None, 1) if volumetric else (None, None, 1)
     convolutional_layer = layers.Conv3D if volumetric else layers.Conv2D
@@ -37,4 +36,4 @@ def get_model(ct_shape=None,
     model.add(layers.Dropout(dropout))
 
     model.add(layers.Dense(units=2, activation="softmax"))
-    return keras.models.Model([model.inputs], [model.output, model.get_layer("features").output]) if output_features else model
+    return model
