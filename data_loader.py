@@ -95,16 +95,20 @@ class RNGContext:
     def __init__(self, seed):
         self.seed = seed
         self.rng_state = None
+        self.rng_state_np = None
 
     def __enter__(self):
         if self.seed is not None:
-            self.rng_state = np.random.get_state()
+            self.rng_state_np = np.random.get_state()
+            self.rng_state = random.getstate()
             np.random.seed(seed=self.seed)
+            random.seed(self.seed)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.seed is not None:
-            np.random.set_state(self.rng_state)
+            np.random.set_state(self.rng_state_np)
+            random.setstate(self.rng_state)
 
 
 class DataLoader(SlimDataLoaderBase, ABC):
@@ -158,13 +162,13 @@ class DataLoader(SlimDataLoaderBase, ABC):
             minority = trues if len(trues) <= len(falses) else falses
             majority = random.sample(majority, len(minority))
             self._data = minority + majority
-        random.shuffle(self._data)
         self.batch_size = _fit_batch_size(len(self._data), self.batch_size)
         self._current_position = 0
         self.was_initialized = False
         self.epochs = epochs
         self._current_epoch = 0
         self.seed = seed
+        self.rng = RNGContext(self.seed)
 
     def initialize(self):
         self._current_epoch = 0
@@ -173,6 +177,7 @@ class DataLoader(SlimDataLoaderBase, ABC):
 
     def _reset(self):
         self._current_position = self.thread_id * self.batch_size
+        self.rng.__enter__()
 
     def generate_train_batch(self):
         if not self.was_initialized:
@@ -222,13 +227,12 @@ class DataLoader(SlimDataLoaderBase, ABC):
                     data_np, seg = augment_resize(data_np, seg, self.input_shape)
                     vector_gen_args["input_shape_post"] = self.input_shape
                 elif self.mode == DataLoader.Mode.SAMPLE:
-                    with RNGContext(self.seed):
-                        x, y, z = random.choice(self.sample_roots[segmentation_file])
-                        data_np = data_np[:, x:x + self.input_shape[0], y:y + self.input_shape[1],
-                                  z:z + self.input_shape[2]]
-                        if seg is not None:
-                            seg = seg[:, x:x + self.input_shape[0], y:y + self.input_shape[1],
-                                  z:z + self.input_shape[2]]
+                    x, y, z = random.choice(self.sample_roots[segmentation_file])
+                    data_np = data_np[:, x:x + self.input_shape[0], y:y + self.input_shape[1],
+                              z:z + self.input_shape[2]]
+                    if seg is not None:
+                        seg = seg[:, x:x + self.input_shape[0], y:y + self.input_shape[1],
+                              z:z + self.input_shape[2]]
                     vector_gen_args["input_shape_post"] = self.input_shape
                 if self.vector_generator is not None:
                     vector_batch.append(self.vector_generator(**vector_gen_args))
