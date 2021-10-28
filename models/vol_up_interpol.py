@@ -25,7 +25,7 @@ def linear_interpolate(x_fix, y_fix, x_var):
     idx = np.arange(len(x_indices))
     weights[idx, x_indices] = distances[idx, x_indices - 1]
     weights[idx, x_indices - 1] = distances[idx, x_indices]
-    weights /= np.sum(weights, axis=1)[:, None]
+    weights /= np.sum(weights, axis=1)[:, None] + 10e-7
 
     y_var = np.dot(weights, y_fix.T)
 
